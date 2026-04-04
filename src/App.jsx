@@ -1,19 +1,34 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+﻿import React, { useEffect, useMemo, useRef, useState } from "react";
+
+import { GlobalWorkerOptions, getDocument } from "pdfjs-dist";
+import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+
+GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
 const DEFAULT_PDF_PATH = "/4_Maximum%20likelihood%20learning.pdf";
-const COLLAPSED_RAIL = 26;
+const COLLAPSED_RAIL = 30;
 const HANDLE_WIDTH = 8;
-const LEFT_MIN = 220;
-const LEFT_MAX = 300;
 const RIGHT_MIN = 320;
+const NOTE_AI_MIN = 260;
+const NOTE_AI_COLLAPSE_THRESHOLD = 240;
 
-const SUBJECTS = [
+const FOLDERS = [
+  { id: "freshman-1", name: "1학년 1학기" },
+  { id: "freshman-2", name: "1학년 2학기" },
+  { id: "toeic", name: "토익 공부" },
+];
+
+const NOTES = [
   {
     id: "hci",
     name: "HCI 설계",
     code: "HCI301",
     instructor: "김교수",
     accent: "accent-coral",
+    folderId: "freshman-1",
+    favorite: true,
+    deleted: false,
+    updatedAt: "오늘 수정됨",
     pages: [
       {
         title: "사용자 중심 설계",
@@ -53,6 +68,10 @@ const SUBJECTS = [
     code: "CSE340",
     instructor: "이교수",
     accent: "accent-blue",
+    folderId: "freshman-2",
+    favorite: true,
+    deleted: false,
+    updatedAt: "3시간 전 수정됨",
     pages: [
       {
         title: "최대우도 추정",
@@ -92,6 +111,10 @@ const SUBJECTS = [
     code: "CSE220",
     instructor: "박교수",
     accent: "accent-green",
+    folderId: null,
+    favorite: false,
+    deleted: false,
+    updatedAt: "어제 수정됨",
     pages: [
       {
         title: "관계형 모델",
@@ -125,6 +148,62 @@ const SUBJECTS = [
       },
     ],
   },
+  {
+    id: "toeic-reading",
+    name: "토익 리딩",
+    code: "TOEIC",
+    instructor: "자율 학습",
+    accent: "accent-gold",
+    folderId: "toeic",
+    favorite: false,
+    deleted: false,
+    updatedAt: "2일 전 수정됨",
+    pages: [
+      {
+        title: "문법 포인트 정리",
+        text:
+          "토익 리딩에서는 품사 구분, 시제 일치, 전치사 사용 같은 빈출 문법 포인트를 빠르게 식별하는 능력이 중요합니다.",
+        bullets: [
+          "선택지의 품사를 먼저 확인하면 오답을 빠르게 줄일 수 있습니다.",
+          "문장 구조를 보고 필요한 역할을 판단해야 합니다.",
+          "자주 틀리는 표현은 오답 노트와 함께 반복 학습이 효과적입니다.",
+        ],
+      },
+      {
+        title: "지문 독해 전략",
+        text:
+          "긴 지문은 문단별 핵심 문장을 먼저 파악하고, 문제에서 묻는 범위를 좁혀가며 읽는 방식이 시간 관리에 도움이 됩니다.",
+        bullets: [
+          "문제 유형에 따라 세부 정보와 추론 질문을 구분해야 합니다.",
+          "고유명사와 숫자는 빠르게 표시해두면 찾기 쉽습니다.",
+          "시간 배분을 위해 모르는 문제는 체크 후 넘어가는 습관이 필요합니다.",
+        ],
+      },
+    ],
+  },
+  {
+    id: "old-report",
+    name: "캡스톤 초안 메모",
+    code: "ARCHIVE",
+    instructor: "보관용",
+    accent: "accent-neutral",
+    folderId: null,
+    favorite: false,
+    deleted: true,
+    updatedAt: "지난주 삭제됨",
+    pages: [
+      {
+        title: "초기 기능 스케치",
+        text:
+          "초기 버전에서는 PDF 요약, 수업 사진 업로드, 발표용 질문 응답 기능을 가장 먼저 넣는 방향으로 스케치를 진행했습니다.",
+        bullets: [
+          "핵심 사용자 흐름은 노트 진입 후 바로 AI 질문으로 이어지는 구조였습니다.",
+          "폴더 분류는 후순위 기능으로 간주했습니다.",
+          "현재 버전에서는 메인 홈 구조를 더 먼저 정리할 필요가 있습니다.",
+        ],
+      },
+    ],
+  },
 ];
 
 const INITIAL_MESSAGES = [
@@ -134,6 +213,13 @@ const INITIAL_MESSAGES = [
     text:
       "안녕하세요. 현재 보고 있는 PDF 페이지를 기준으로 질문하면 현재 페이지, 주변 페이지, 메모, 이미지 내용을 조합해서 답변합니다.",
   },
+];
+
+const NAV_ITEMS = [
+  { id: "all", label: "모든 노트" },
+  { id: "favorites", label: "즐겨찾기" },
+  { id: "trash", label: "휴지통" },
+  { id: "folders", label: "폴더" },
 ];
 
 function clamp(value, min, max) {
@@ -146,11 +232,11 @@ function buildMockAnswer(question, currentPage, nearbyPages, noteText, latestIma
     ? `사용자 메모 요약: ${noteText.trim().slice(0, 120)}.`
     : "아직 작성된 메모가 없어 PDF 내용 중심으로 답변했습니다.";
   const imageSummary = latestImage
-    ? `첨부 이미지 분석 결과는 "${latestImage.analysis}" 입니다.`
+    ? `첨부 이미지 분석 결과는 \"${latestImage.analysis}\" 입니다.`
     : "현재 페이지에는 첨부된 판서 이미지가 없습니다.";
 
   return [
-    `질문 "${question}"에 대해 현재 페이지의 핵심은 다음과 같습니다. ${currentPage.text}`,
+    `질문 \"${question}\"에 대해 현재 페이지의 핵심은 다음과 같습니다. ${currentPage.text}`,
     `주변 페이지 문맥으로는 ${nearbySummary} 내용이 함께 참고됩니다.`,
     noteSummary,
     imageSummary,
@@ -163,23 +249,129 @@ function makeImageAnalysis(fileName, currentPage) {
   return `${currentPage.title}와 연결된 판서 이미지로 보이며, ${stem} 키워드가 강조된 자료입니다.`;
 }
 
+function getFolderById(folderId) {
+  return FOLDERS.find((folder) => folder.id === folderId) ?? null;
+}
+
+function getPreviewVariant(note) {
+  if (note.code === "TOEIC") {
+    return "preview-handwriting";
+  }
+  if (note.code === "ARCHIVE") {
+    return "preview-document";
+  }
+  if (note.accent === "accent-blue") {
+    return "preview-slide";
+  }
+  return "preview-cover";
+}
+
+function formatPreviewTitle(note) {
+  return note.pages[0]?.title ?? note.name;
+}
+
+function buildStrokePath(points, width, height) {
+  if (points.length === 0) {
+    return "";
+  }
+
+  return points
+    .map(
+      (point, index) =>
+        `${index === 0 ? "M" : "L"} ${point.x * width} ${point.y * height}`,
+    )
+    .join(" ");
+}
+
+function distanceToSegment(point, start, end) {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+
+  if (dx === 0 && dy === 0) {
+    return Math.hypot(point.x - start.x, point.y - start.y);
+  }
+
+  const t = clamp(
+    ((point.x - start.x) * dx + (point.y - start.y) * dy) / (dx * dx + dy * dy),
+    0,
+    1,
+  );
+  const projectionX = start.x + t * dx;
+  const projectionY = start.y + t * dy;
+  return Math.hypot(point.x - projectionX, point.y - projectionY);
+}
+
+function strokeTouchesPoint(stroke, point, threshold = 0.018) {
+  if (stroke.points.length < 2) {
+    return false;
+  }
+
+  for (let index = 1; index < stroke.points.length; index += 1) {
+    if (distanceToSegment(point, stroke.points[index - 1], stroke.points[index]) <= threshold) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function interpolatePoints(start, end, maxStep = 0.008) {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const distance = Math.hypot(dx, dy);
+
+  if (distance <= maxStep) {
+    return [end];
+  }
+
+  const steps = Math.ceil(distance / maxStep);
+  return Array.from({ length: steps }, (_, index) => {
+    const ratio = (index + 1) / steps;
+    return {
+      x: start.x + dx * ratio,
+      y: start.y + dy * ratio,
+    };
+  });
+}
+
+function buildSelectionPath(points, width, height) {
+  if (points.length === 0) {
+    return "";
+  }
+
+  const commands = points.map((point, index) => {
+    const x = point.x * width;
+    const y = point.y * height;
+    return `${index === 0 ? "M" : "L"} ${x} ${y}`;
+  });
+
+  return `${commands.join(" ")} Z`;
+}
+
 export default function App() {
-  const [selectedSubjectId, setSelectedSubjectId] = useState("ml");
-  const [pageBySubject, setPageBySubject] = useState(
-    SUBJECTS.reduce((acc, subject) => {
-      acc[subject.id] = 0;
+  const [screen, setScreen] = useState("home");
+  const [selectedNav, setSelectedNav] = useState("folders");
+  const [selectedFolderId, setSelectedFolderId] = useState(null);
+  const [selectedNoteId, setSelectedNoteId] = useState("ml");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [pageByNote, setPageByNote] = useState(
+    NOTES.reduce((acc, note) => {
+      acc[note.id] = 0;
       return acc;
     }, {}),
   );
   const [notesByPage, setNotesByPage] = useState({});
-  const [chatBySubject, setChatBySubject] = useState(
-    SUBJECTS.reduce((acc, subject) => {
-      acc[subject.id] = INITIAL_MESSAGES;
+  const [chatByNote, setChatByNote] = useState(
+    NOTES.reduce((acc, note) => {
+      acc[note.id] = INITIAL_MESSAGES;
       return acc;
     }, {}),
   );
   const [uploadsByPage, setUploadsByPage] = useState({});
-  const [pdfBySubject, setPdfBySubject] = useState({
+  const [strokesByPage, setStrokesByPage] = useState({});
+  const [redoStrokesByPage, setRedoStrokesByPage] = useState({});
+  const [capturesByPage, setCapturesByPage] = useState({});
+  const [pdfByNote, setPdfByNote] = useState({
     ml: {
       name: "4_Maximum likelihood learning.pdf",
       previewUrl: DEFAULT_PDF_PATH,
@@ -190,32 +382,237 @@ export default function App() {
   const [isThinking, setIsThinking] = useState(false);
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
-  const [leftWidth, setLeftWidth] = useState(280);
-  const [rightWidth, setRightWidth] = useState(360);
+  const [rightWidth, setRightWidth] = useState(320);
+  const [annotationMode, setAnnotationMode] = useState("draw");
+  const [captureSelection, setCaptureSelection] = useState(null);
+  const [pageZoom, setPageZoom] = useState(1);
   const [dragging, setDragging] = useState(null);
   const cameraInputRef = useRef(null);
   const galleryInputRef = useRef(null);
   const pdfInputRef = useRef(null);
+  const typingTextareaRef = useRef(null);
   const uploadUrlsRef = useRef([]);
+  const annotationStageRef = useRef(null);
+  const annotationScrollRef = useRef(null);
+  const pdfCanvasRefs = useRef({});
+  const pageSurfaceRefs = useRef({});
+  const activeStrokeIdRef = useRef(null);
+  const activePointerIdRef = useRef(null);
+  const isDrawingRef = useRef(false);
+  const isCapturingRef = useRef(false);
+  const liveStrokePointsRef = useRef([]);
+  const drawSyncFrameRef = useRef(null);
+  const notesByPageRef = useRef({});
+  const strokesByPageRef = useRef({});
+  const undoHistoryRef = useRef([]);
+  const redoHistoryRef = useRef([]);
+  const isApplyingHistoryRef = useRef(false);
+  const [pdfPageSizes, setPdfPageSizes] = useState([]);
+  const [pdfRenderError, setPdfRenderError] = useState("");
+  const [pdfPageCount, setPdfPageCount] = useState(0);
 
-  const selectedSubject = SUBJECTS.find((subject) => subject.id === selectedSubjectId);
-  const currentPageIndex = pageBySubject[selectedSubjectId];
-  const currentPage = selectedSubject.pages[currentPageIndex];
-  const pageKey = `${selectedSubjectId}:${currentPageIndex}`;
+  const selectedNote = NOTES.find((note) => note.id === selectedNoteId) ?? NOTES[0];
+  const currentPageIndex = pageByNote[selectedNote.id] ?? 0;
+  const safeContentPageIndex = Math.min(currentPageIndex, selectedNote.pages.length - 1);
+  const currentPage = selectedNote.pages[safeContentPageIndex];
+  const pageKey = `${selectedNote.id}:${currentPageIndex}`;
   const currentNote = notesByPage[pageKey] ?? "";
+  const currentCaptures = capturesByPage[pageKey] ?? [];
   const currentUploads = uploadsByPage[pageKey] ?? [];
-  const currentPdf = pdfBySubject[selectedSubjectId] ?? null;
-  const messages = chatBySubject[selectedSubjectId] ?? INITIAL_MESSAGES;
+  const currentPdf = pdfByNote[selectedNote.id] ?? null;
+  const messages = chatByNote[selectedNote.id] ?? INITIAL_MESSAGES;
+  const selectedFolder = getFolderById(selectedFolderId);
+  const renderedPageCount = pdfPageCount || selectedNote.pages.length;
 
   const nearbyPages = useMemo(() => {
-    return selectedSubject.pages.filter((_, index) => Math.abs(index - currentPageIndex) <= 1);
-  }, [currentPageIndex, selectedSubject.pages]);
+    return selectedNote.pages.filter((_, index) => Math.abs(index - safeContentPageIndex) <= 1);
+  }, [safeContentPageIndex, selectedNote.pages]);
+
+  const noteCounts = useMemo(
+    () => ({
+      all: NOTES.filter((note) => !note.deleted).length,
+      favorites: NOTES.filter((note) => note.favorite && !note.deleted).length,
+      trash: NOTES.filter((note) => note.deleted).length,
+      folders: FOLDERS.length,
+    }),
+    [],
+  );
+
+  const notesInFolders = useMemo(() => NOTES.filter((note) => !note.deleted && note.folderId), []);
+  const ungroupedNotes = useMemo(() => NOTES.filter((note) => !note.deleted && !note.folderId), []);
+
+  const filteredNotes = useMemo(() => {
+    if (selectedNav === "all") {
+      return NOTES.filter((note) => !note.deleted);
+    }
+    if (selectedNav === "favorites") {
+      return NOTES.filter((note) => note.favorite && !note.deleted);
+    }
+    if (selectedNav === "trash") {
+      return NOTES.filter((note) => note.deleted);
+    }
+    if (selectedFolderId) {
+      return NOTES.filter((note) => note.folderId === selectedFolderId && !note.deleted);
+    }
+    return [];
+  }, [selectedFolderId, selectedNav]);
+
+  const visibleHomeNotes = useMemo(() => {
+    const baseNotes = selectedNav === "folders"
+      ? selectedFolder
+        ? NOTES.filter((note) => note.folderId === selectedFolder.id && !note.deleted)
+        : ungroupedNotes
+      : filteredNotes;
+
+    if (!searchQuery.trim()) {
+      return baseNotes;
+    }
+
+    const query = searchQuery.trim().toLowerCase();
+    return baseNotes.filter((note) => {
+      const folderName = getFolderById(note.folderId)?.name ?? "";
+      return [note.name, note.code, note.instructor, folderName]
+        .join(" ")
+        .toLowerCase()
+        .includes(query);
+    });
+  }, [filteredNotes, searchQuery, selectedFolder, selectedNav, ungroupedNotes]);
 
   useEffect(() => {
     return () => {
       uploadUrlsRef.current.forEach((previewUrl) => URL.revokeObjectURL(previewUrl));
+      if (drawSyncFrameRef.current) {
+        window.cancelAnimationFrame(drawSyncFrameRef.current);
+      }
     };
   }, []);
+
+  useEffect(() => {
+    setPdfPageCount(selectedNote.pages.length);
+    setPdfPageSizes([]);
+  }, [selectedNote.id, selectedNote.pages.length]);
+
+  useEffect(() => {
+    try {
+      const savedNotes = localStorage.getItem("campus-notes-text");
+      const savedStrokes = localStorage.getItem("campus-notes-strokes");
+      const savedPages = localStorage.getItem("campus-notes-page-index");
+
+      if (savedNotes) {
+        setNotesByPage(JSON.parse(savedNotes));
+      }
+      if (savedStrokes) {
+        setStrokesByPage(JSON.parse(savedStrokes));
+      }
+      const savedRedoStrokes = localStorage.getItem("campus-notes-redo-strokes");
+      if (savedRedoStrokes) {
+        setRedoStrokesByPage(JSON.parse(savedRedoStrokes));
+      }
+      if (savedPages) {
+        setPageByNote((current) => ({
+          ...current,
+          ...JSON.parse(savedPages),
+        }));
+      }
+    } catch {
+      // Ignore malformed saved data and continue with defaults.
+    }
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem("campus-notes-text", JSON.stringify(notesByPage));
+    notesByPageRef.current = notesByPage;
+  }, [notesByPage]);
+
+  useEffect(() => {
+    localStorage.setItem("campus-notes-strokes", JSON.stringify(strokesByPage));
+    strokesByPageRef.current = strokesByPage;
+  }, [strokesByPage]);
+
+  useEffect(() => {
+    localStorage.setItem("campus-notes-redo-strokes", JSON.stringify(redoStrokesByPage));
+  }, [redoStrokesByPage]);
+
+  useEffect(() => {
+    localStorage.setItem("campus-notes-page-index", JSON.stringify(pageByNote));
+  }, [pageByNote]);
+
+  useEffect(() => {
+    if (screen !== "note" || !currentPdf || !annotationStageRef.current) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    let renderTasks = [];
+    let pdfDocument = null;
+
+    const renderPdfPage = async () => {
+      try {
+        setPdfRenderError("");
+        setPdfPageSizes([]);
+        const loadingTask = getDocument(currentPdf.previewUrl);
+        pdfDocument = await loadingTask.promise;
+        const totalPages = pdfDocument.numPages;
+        setPdfPageCount(totalPages);
+        const containerWidth = Math.min(annotationStageRef.current.clientWidth - 80, 860);
+        const nextSizes = [];
+
+        for (let pageNumber = 1; pageNumber <= totalPages; pageNumber += 1) {
+          const page = await pdfDocument.getPage(pageNumber);
+          const baseViewport = page.getViewport({ scale: 1 });
+          const scale = containerWidth / baseViewport.width;
+          const viewport = page.getViewport({ scale });
+          const canvas = pdfCanvasRefs.current[pageNumber - 1];
+
+          nextSizes[pageNumber - 1] = {
+            width: viewport.width,
+            height: viewport.height,
+          };
+
+          if (!canvas) {
+            continue;
+          }
+
+          const context = canvas.getContext("2d");
+          canvas.width = viewport.width;
+          canvas.height = viewport.height;
+          canvas.style.width = `${viewport.width}px`;
+          canvas.style.height = `${viewport.height}px`;
+
+          const renderTask = page.render({
+            canvasContext: context,
+            viewport,
+          });
+          renderTasks.push(renderTask);
+          await renderTask.promise;
+        }
+
+        if (!cancelled) {
+          setPdfPageSizes(nextSizes);
+        }
+      } catch (error) {
+        if (cancelled || error?.name === "RenderingCancelledException") {
+          return;
+        }
+        setPdfRenderError("PDF 페이지를 렌더링하지 못했습니다.");
+      }
+    };
+
+    renderPdfPage();
+
+    const handleResize = () => {
+      renderPdfPage();
+    };
+
+    window.addEventListener("resize", handleResize);
+
+    return () => {
+      cancelled = true;
+      renderTasks.forEach((task) => task?.cancel?.());
+      pdfDocument?.destroy?.();
+      window.removeEventListener("resize", handleResize);
+    };
+  }, [currentPdf, screen]);
 
   useEffect(() => {
     if (!dragging) {
@@ -223,16 +620,30 @@ export default function App() {
     }
 
     const handleMouseMove = (event) => {
-      if (dragging === "left") {
-        setLeftWidth(clamp(event.clientX - 18, LEFT_MIN, LEFT_MAX));
+      if (dragging !== "note-ai") {
         return;
       }
 
-      const maxRight = Math.max(RIGHT_MIN, Math.floor(window.innerWidth * 0.6));
-      setRightWidth(clamp(window.innerWidth - event.clientX - 18, RIGHT_MIN, maxRight));
+      const maxRight = Math.max(NOTE_AI_MIN, Math.floor(window.innerWidth * 0.5));
+      const nextWidth = clamp(event.clientX - 12, 180, maxRight);
+      if (nextWidth < NOTE_AI_COLLAPSE_THRESHOLD) {
+        setRightOpen(false);
+        setRightWidth(NOTE_AI_MIN);
+        return;
+      }
+      if (!rightOpen) {
+        setRightOpen(true);
+      }
+      setRightWidth(nextWidth);
     };
 
     const handleMouseUp = () => {
+      if (dragging === "note-ai") {
+        setRightWidth((current) => {
+          const maxRight = Math.max(NOTE_AI_MIN, Math.floor(window.innerWidth * 0.5));
+          return clamp(current, NOTE_AI_MIN, maxRight);
+        });
+      }
       setDragging(null);
       document.body.classList.remove("is-resizing");
     };
@@ -246,28 +657,597 @@ export default function App() {
       window.removeEventListener("mousemove", handleMouseMove);
       window.removeEventListener("mouseup", handleMouseUp);
     };
-  }, [dragging]);
+  }, [dragging, rightOpen]);
 
-  const handlePageChange = (direction) => {
-    setPageBySubject((current) => {
-      const nextPageIndex = current[selectedSubjectId] + direction;
-      if (nextPageIndex < 0 || nextPageIndex >= selectedSubject.pages.length) {
-        return current;
+  useEffect(() => {
+    if (screen === "note" && annotationMode === "text") {
+      typingTextareaRef.current?.focus();
+    }
+  }, [annotationMode, currentPageIndex, screen]);
+
+  useEffect(() => {
+    if (screen !== "note" || !annotationScrollRef.current) {
+      return undefined;
+    }
+
+    const element = annotationScrollRef.current;
+    const handleScroll = () => {
+      if (isDrawingRef.current) {
+        return;
       }
 
-      return {
-        ...current,
-        [selectedSubjectId]: nextPageIndex,
+      const containerRect = element.getBoundingClientRect();
+      const containerCenter = containerRect.top + containerRect.height * 0.5;
+      const pageEntries = Object.entries(pageSurfaceRefs.current)
+        .map(([index, node]) => {
+          const rect = node.getBoundingClientRect();
+          return {
+          index: Number(index),
+          node,
+            rect,
+            distance: Math.abs(rect.top + rect.height * 0.5 - containerCenter),
+          };
+        })
+        .filter((entry) => Number.isFinite(entry.distance));
+
+      if (pageEntries.length === 0) {
+        return;
+      }
+
+      const containingEntry = pageEntries.find(
+        (entry) => entry.rect.top <= containerCenter && entry.rect.bottom >= containerCenter,
+      );
+      const nearest = pageEntries.reduce((best, entry) =>
+        entry.distance < best.distance ? entry : best,
+      );
+      const nextPageIndex = containingEntry?.index ?? nearest.index;
+
+      setPageByNote((current) =>
+        current[selectedNote.id] === nextPageIndex
+          ? current
+          : { ...current, [selectedNote.id]: nextPageIndex },
+      );
+    };
+
+    const handleWheelZoom = (event) => {
+      if (!event.ctrlKey) {
+        return;
+      }
+
+      event.preventDefault();
+      const zoomDelta = event.deltaY < 0 ? 0.08 : -0.08;
+      setPageZoom((current) => clamp(Number((current + zoomDelta).toFixed(2)), 0.6, 2));
+    };
+
+    element.addEventListener("scroll", handleScroll, { passive: true });
+    element.addEventListener("wheel", handleWheelZoom, { passive: false });
+    handleScroll();
+
+    return () => {
+      element.removeEventListener("scroll", handleScroll);
+      element.removeEventListener("wheel", handleWheelZoom);
+    };
+  }, [screen, selectedNote.id]);
+
+  useEffect(() => {
+    if (screen !== "note" || !annotationScrollRef.current) {
+      return;
+    }
+
+    const targetPage = pageSurfaceRefs.current[currentPageIndex];
+    if (!targetPage) {
+      return;
+    }
+
+    annotationScrollRef.current.scrollTo({
+      top: Math.max(targetPage.offsetTop - 20, 0),
+      behavior: "auto",
+    });
+  }, [screen, selectedNote.id]);
+
+  useEffect(() => {
+    if (screen !== "note") {
+      return undefined;
+    }
+
+    const handleUndoRedo = (event) => {
+      const key = event.key.toLowerCase();
+      const isUndo = (event.ctrlKey || event.metaKey) && !event.shiftKey && key === "z";
+      const isRedo =
+        (event.ctrlKey || event.metaKey) &&
+        ((event.shiftKey && key === "z") || key === "y");
+
+      if (!isUndo && !isRedo) {
+        return;
+      }
+
+      event.preventDefault();
+      if (isUndo) {
+        const entry = undoHistoryRef.current[undoHistoryRef.current.length - 1];
+        if (!entry) {
+          return;
+        }
+
+        undoHistoryRef.current = undoHistoryRef.current.slice(0, -1);
+        redoHistoryRef.current = [...redoHistoryRef.current, entry];
+        applyHistoryEntry(entry, "undo");
+        return;
+      }
+
+      const entry = redoHistoryRef.current[redoHistoryRef.current.length - 1];
+      if (!entry) {
+        return;
+      }
+
+      redoHistoryRef.current = redoHistoryRef.current.slice(0, -1);
+      undoHistoryRef.current = [...undoHistoryRef.current, entry];
+      applyHistoryEntry(entry, "redo");
+    };
+
+    window.addEventListener("keydown", handleUndoRedo);
+    return () => {
+      window.removeEventListener("keydown", handleUndoRedo);
+    };
+  }, [screen]);
+
+  const openHome = (navId) => {
+    setScreen("home");
+    setSelectedNav(navId);
+    setQuestion("");
+    setSearchQuery("");
+    if (navId !== "folders") {
+      setSelectedFolderId(null);
+    }
+  };
+
+  const openNote = (noteId) => {
+    setSelectedNoteId(noteId);
+    setScreen("note");
+    setRightOpen(true);
+  };
+
+  const handleFolderSelect = (folderId) => {
+    setSelectedNav("folders");
+    setScreen("home");
+    setSelectedFolderId((current) => (current === folderId ? null : folderId));
+    setSearchQuery("");
+  };
+
+  const pushHistory = (entry) => {
+    if (isApplyingHistoryRef.current) {
+      return;
+    }
+
+    undoHistoryRef.current = [...undoHistoryRef.current, entry];
+    redoHistoryRef.current = [];
+  };
+
+  const applyHistoryEntry = (entry, direction) => {
+    isApplyingHistoryRef.current = true;
+
+    if (entry.kind === "text") {
+      const nextValue = direction === "undo" ? entry.before : entry.after;
+      notesByPageRef.current = {
+        ...notesByPageRef.current,
+        [entry.pageKey]: nextValue,
       };
+      setNotesByPage(notesByPageRef.current);
+      isApplyingHistoryRef.current = false;
+      return;
+    }
+
+    if (entry.kind === "stroke-add") {
+      const nextStrokes =
+        direction === "undo"
+          ? (strokesByPageRef.current[entry.pageKey] ?? []).filter((stroke) => stroke.id !== entry.stroke.id)
+          : [...(strokesByPageRef.current[entry.pageKey] ?? []), entry.stroke];
+      strokesByPageRef.current = {
+        ...strokesByPageRef.current,
+        [entry.pageKey]: nextStrokes,
+      };
+      setStrokesByPage(strokesByPageRef.current);
+      isApplyingHistoryRef.current = false;
+      return;
+    }
+
+    if (entry.kind === "erase-strokes") {
+      const nextStrokes =
+        direction === "undo"
+          ? [...(strokesByPageRef.current[entry.pageKey] ?? []), ...entry.removedStrokes]
+          : (strokesByPageRef.current[entry.pageKey] ?? []).filter(
+              (stroke) => !entry.removedStrokes.some((removed) => removed.id === stroke.id),
+            );
+      strokesByPageRef.current = {
+        ...strokesByPageRef.current,
+        [entry.pageKey]: nextStrokes,
+      };
+      setStrokesByPage(strokesByPageRef.current);
+      isApplyingHistoryRef.current = false;
+      return;
+    }
+
+    if (entry.kind === "clear-page") {
+      const nextText = direction === "undo" ? entry.beforeText : "";
+      const nextStrokes = direction === "undo" ? entry.beforeStrokes : [];
+      notesByPageRef.current = {
+        ...notesByPageRef.current,
+        [entry.pageKey]: nextText,
+      };
+      strokesByPageRef.current = {
+        ...strokesByPageRef.current,
+        [entry.pageKey]: nextStrokes,
+      };
+      setNotesByPage(notesByPageRef.current);
+      setStrokesByPage(strokesByPageRef.current);
+      isApplyingHistoryRef.current = false;
+    }
+  };
+
+  const syncActiveStroke = () => {
+    const activeStroke = activeStrokeIdRef.current;
+    if (!activeStroke) {
+      return;
+    }
+
+    const targetPageKey = `${selectedNote.id}:${activeStroke.pageIndex}`;
+    const nextPoints = liveStrokePointsRef.current;
+    setStrokesByPage((current) => ({
+      ...current,
+      [targetPageKey]: (current[targetPageKey] ?? []).map((stroke) =>
+        stroke.id === activeStroke.strokeId ? { ...stroke, points: nextPoints } : stroke,
+      ),
+    }));
+  };
+
+  const scheduleStrokeSync = () => {
+    if (drawSyncFrameRef.current) {
+      return;
+    }
+
+    drawSyncFrameRef.current = window.requestAnimationFrame(() => {
+      drawSyncFrameRef.current = null;
+      syncActiveStroke();
     });
   };
 
-  const handleNoteChange = (event) => {
+  const getAnnotationPoint = (pageIndex, event) => {
+    const element = pageSurfaceRefs.current[pageIndex];
+    if (!element) {
+      return null;
+    }
+
+    const rect = element.getBoundingClientRect();
+    if (!rect.width || !rect.height) {
+      return null;
+    }
+
+    return {
+      x: clamp((event.clientX - rect.left) / rect.width, 0, 1),
+      y: clamp((event.clientY - rect.top) / rect.height, 0, 1),
+    };
+  };
+
+  const handleAnnotationPointerDown = (pageIndex, event) => {
+    if (!currentPdf || event.target instanceof HTMLTextAreaElement) {
+      return;
+    }
+
+    if (event.pointerType === "mouse" && event.button !== 0) {
+      return;
+    }
+
+    if (annotationMode === "capture") {
+      const point = getAnnotationPoint(pageIndex, event);
+      if (!point) {
+        return;
+      }
+
+      event.currentTarget.setPointerCapture?.(event.pointerId);
+      event.preventDefault();
+      event.stopPropagation();
+      activePointerIdRef.current = event.pointerId;
+      isCapturingRef.current = true;
+      setCaptureSelection({ pageIndex, points: [point] });
+      return;
+    }
+
+    if (annotationMode === "erase") {
+      handleEraseStroke(pageIndex, event);
+      return;
+    }
+
+    if (annotationMode !== "draw") {
+      return;
+    }
+
+    const point = getAnnotationPoint(pageIndex, event);
+    if (!point) {
+      return;
+    }
+
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    event.preventDefault();
+    event.stopPropagation();
+    activePointerIdRef.current = event.pointerId;
+    isDrawingRef.current = true;
+    liveStrokePointsRef.current = [point];
+
+    const strokeId = `stroke-${Date.now()}`;
+    activeStrokeIdRef.current = { strokeId, pageIndex };
+    const targetPageKey = `${selectedNote.id}:${pageIndex}`;
+    setRedoStrokesByPage((current) => ({
+      ...current,
+      [targetPageKey]: [],
+    }));
+    setStrokesByPage((current) => ({
+      ...current,
+      [targetPageKey]: [
+        ...(current[targetPageKey] ?? []),
+        { id: strokeId, points: liveStrokePointsRef.current },
+      ],
+    }));
+  };
+
+  const handleAnnotationPointerMove = (pageIndex, event) => {
+    if (
+      annotationMode === "capture" &&
+      isCapturingRef.current &&
+      captureSelection &&
+      captureSelection.pageIndex === pageIndex &&
+      activePointerIdRef.current === event.pointerId
+    ) {
+      const point = getAnnotationPoint(pageIndex, event);
+      if (!point) {
+        return;
+      }
+
+      event.preventDefault();
+      setCaptureSelection((current) => {
+        if (!current || current.pageIndex !== pageIndex) {
+          return current;
+        }
+
+        const previousPoint = current.points[current.points.length - 1];
+        const nextPoints = previousPoint ? interpolatePoints(previousPoint, point, 0.012) : [point];
+        return {
+          ...current,
+          points: [...current.points, ...nextPoints],
+        };
+      });
+      return;
+    }
+
+    if (
+      !activeStrokeIdRef.current ||
+      activeStrokeIdRef.current.pageIndex !== pageIndex ||
+      activePointerIdRef.current !== event.pointerId ||
+      (event.pointerType === "mouse" && (event.buttons & 1) !== 1)
+    ) {
+      return;
+    }
+
+    const point = getAnnotationPoint(pageIndex, event);
+    if (!point) {
+      return;
+    }
+
+    event.preventDefault();
+
+    const previousPoint = liveStrokePointsRef.current[liveStrokePointsRef.current.length - 1];
+    const nextPoints = previousPoint
+      ? interpolatePoints(previousPoint, point)
+      : [point];
+
+    liveStrokePointsRef.current = [...liveStrokePointsRef.current, ...nextPoints];
+    scheduleStrokeSync();
+  };
+
+  const handleAnnotationPointerUp = () => {
+    const activeStroke = activeStrokeIdRef.current;
+    const finishedStroke =
+      activeStroke && liveStrokePointsRef.current.length > 0
+        ? {
+            id: activeStroke.strokeId,
+            points: liveStrokePointsRef.current,
+          }
+        : null;
+
+    if (annotationMode === "capture" && captureSelection && captureSelection.points.length >= 3) {
+      const { pageIndex, points } = captureSelection;
+      const pageKeyForCapture = `${selectedNote.id}:${pageIndex}`;
+      const pageSize = pdfPageSizes[pageIndex] ?? { width: 760, height: 980 };
+      const canvas = pdfCanvasRefs.current[pageIndex];
+
+      if (canvas) {
+        const xs = points.map((point) => point.x * pageSize.width);
+        const ys = points.map((point) => point.y * pageSize.height);
+        const minX = Math.max(Math.floor(Math.min(...xs)), 0);
+        const minY = Math.max(Math.floor(Math.min(...ys)), 0);
+        const maxX = Math.min(Math.ceil(Math.max(...xs)), pageSize.width);
+        const maxY = Math.min(Math.ceil(Math.max(...ys)), pageSize.height);
+        const width = Math.max(maxX - minX, 1);
+        const height = Math.max(maxY - minY, 1);
+
+        const exportCanvas = document.createElement("canvas");
+        exportCanvas.width = width;
+        exportCanvas.height = height;
+        const exportContext = exportCanvas.getContext("2d");
+
+        exportContext.save();
+        exportContext.beginPath();
+        points.forEach((point, index) => {
+          const x = point.x * pageSize.width - minX;
+          const y = point.y * pageSize.height - minY;
+          if (index === 0) {
+            exportContext.moveTo(x, y);
+          } else {
+            exportContext.lineTo(x, y);
+          }
+        });
+        exportContext.closePath();
+        exportContext.clip();
+        exportContext.drawImage(canvas, -minX, -minY);
+
+        const pageStrokes = strokesByPage[pageKeyForCapture] ?? [];
+        exportContext.lineCap = "round";
+        exportContext.lineJoin = "round";
+        exportContext.strokeStyle = "#1d4ed8";
+        exportContext.lineWidth = 4;
+        pageStrokes.forEach((stroke) => {
+          if (stroke.points.length < 2) {
+            return;
+          }
+
+          exportContext.beginPath();
+          stroke.points.forEach((point, index) => {
+            const x = point.x * pageSize.width - minX;
+            const y = point.y * pageSize.height - minY;
+            if (index === 0) {
+              exportContext.moveTo(x, y);
+            } else {
+              exportContext.lineTo(x, y);
+            }
+          });
+          exportContext.stroke();
+        });
+        exportContext.restore();
+
+        const capture = {
+          id: `capture-${Date.now()}`,
+          pageIndex,
+          previewUrl: exportCanvas.toDataURL("image/png"),
+        };
+
+        setCapturesByPage((current) => ({
+          ...current,
+          [pageKeyForCapture]: [...(current[pageKeyForCapture] ?? []), capture],
+        }));
+      }
+    }
+
+    if (drawSyncFrameRef.current) {
+      window.cancelAnimationFrame(drawSyncFrameRef.current);
+      drawSyncFrameRef.current = null;
+    }
+    syncActiveStroke();
+    if (finishedStroke && activeStroke) {
+      pushHistory({
+        kind: "stroke-add",
+        pageKey: `${selectedNote.id}:${activeStroke.pageIndex}`,
+        stroke: finishedStroke,
+      });
+    }
+    setCaptureSelection(null);
+    activeStrokeIdRef.current = null;
+    activePointerIdRef.current = null;
+    isDrawingRef.current = false;
+    isCapturingRef.current = false;
+    liveStrokePointsRef.current = [];
+  };
+
+  const handleEraseStroke = (pageIndex, event) => {
+    const point = getAnnotationPoint(pageIndex, event);
+    if (!point) {
+      return;
+    }
+
+    const targetPageKey = `${selectedNote.id}:${pageIndex}`;
+    const currentPageStrokes = strokesByPageRef.current[targetPageKey] ?? [];
+    const removedStrokes = currentPageStrokes.filter((stroke) => strokeTouchesPoint(stroke, point));
+    if (removedStrokes.length === 0) {
+      return;
+    }
+
+    setRedoStrokesByPage((current) => ({
+      ...current,
+      [targetPageKey]: [],
+    }));
+    const nextStrokes = currentPageStrokes.filter(
+      (stroke) => !removedStrokes.some((removed) => removed.id === stroke.id),
+    );
+    strokesByPageRef.current = {
+      ...strokesByPageRef.current,
+      [targetPageKey]: nextStrokes,
+    };
+    setStrokesByPage(strokesByPageRef.current);
+    pushHistory({
+      kind: "erase-strokes",
+      pageKey: targetPageKey,
+      removedStrokes,
+    });
+  };
+
+  const handleTypedNoteChange = (event, pageIndex = currentPageIndex) => {
     const value = event.target.value;
+    const targetPageKey = `${selectedNote.id}:${pageIndex}`;
+    const previousValue = notesByPageRef.current[targetPageKey] ?? "";
+    if (previousValue === value) {
+      return;
+    }
+
+    notesByPageRef.current = {
+      ...notesByPageRef.current,
+      [targetPageKey]: value,
+    };
+    setNotesByPage(notesByPageRef.current);
+    pushHistory({
+      kind: "text",
+      pageKey: targetPageKey,
+      before: previousValue,
+      after: value,
+    });
+  };
+
+  const handleTypingKeyDown = (event, pageIndex) => {
+    if (event.key !== "Tab") {
+      return;
+    }
+
+    event.preventDefault();
+    const target = event.target;
+    const value = target.value;
+    const start = target.selectionStart;
+    const end = target.selectionEnd;
+    const nextValue = `${value.slice(0, start)}\t${value.slice(end)}`;
+
     setNotesByPage((current) => ({
       ...current,
-      [pageKey]: value,
+      [`${selectedNote.id}:${pageIndex}`]: nextValue,
     }));
+
+    window.requestAnimationFrame(() => {
+      target.selectionStart = start + 1;
+      target.selectionEnd = start + 1;
+    });
+  };
+
+  const handleClearAnnotations = () => {
+    const beforeStrokes = strokesByPageRef.current[pageKey] ?? [];
+    const beforeText = notesByPageRef.current[pageKey] ?? "";
+    if (beforeStrokes.length === 0 && beforeText === "") {
+      return;
+    }
+
+    strokesByPageRef.current = {
+      ...strokesByPageRef.current,
+      [pageKey]: [],
+    };
+    notesByPageRef.current = {
+      ...notesByPageRef.current,
+      [pageKey]: "",
+    };
+    setStrokesByPage(strokesByPageRef.current);
+    setRedoStrokesByPage((current) => ({
+      ...current,
+      [pageKey]: [],
+    }));
+    setNotesByPage(notesByPageRef.current);
+    pushHistory({
+      kind: "clear-page",
+      pageKey,
+      beforeText,
+      beforeStrokes,
+    });
   };
 
   const handleImageUpload = (event) => {
@@ -302,9 +1282,9 @@ export default function App() {
     const previewUrl = URL.createObjectURL(file);
     uploadUrlsRef.current.push(previewUrl);
 
-    setPdfBySubject((current) => ({
+    setPdfByNote((current) => ({
       ...current,
-      [selectedSubjectId]: {
+      [selectedNote.id]: {
         name: file.name,
         previewUrl,
         isBundled: false,
@@ -326,9 +1306,9 @@ export default function App() {
       text: trimmedQuestion,
     };
 
-    setChatBySubject((current) => ({
+    setChatByNote((current) => ({
       ...current,
-      [selectedSubjectId]: [...(current[selectedSubjectId] ?? []), userMessage],
+      [selectedNote.id]: [...(current[selectedNote.id] ?? []), userMessage],
     }));
     setQuestion("");
     setIsThinking(true);
@@ -349,9 +1329,9 @@ export default function App() {
         text: answer,
       };
 
-      setChatBySubject((current) => ({
+      setChatByNote((current) => ({
         ...current,
-        [selectedSubjectId]: [...(current[selectedSubjectId] ?? []), assistantMessage],
+        [selectedNote.id]: [...(current[selectedNote.id] ?? []), assistantMessage],
       }));
       setIsThinking(false);
     }, 700);
@@ -364,301 +1344,481 @@ export default function App() {
     }
   };
 
-  const gridTemplateColumns = [
-    leftOpen ? `${leftWidth}px` : `${COLLAPSED_RAIL}px`,
-    leftOpen ? `${HANDLE_WIDTH}px` : "0px",
-    "minmax(0, 1fr)",
-    rightOpen ? `${HANDLE_WIDTH}px` : "0px",
-    rightOpen ? `${rightWidth}px` : `${COLLAPSED_RAIL}px`,
-  ].join(" ");
+  const mainTitle = NAV_ITEMS.find((item) => item.id === selectedNav)?.label ?? "폴더";
+
+  const noteDetailGridColumns =
+    screen === "note"
+      ? [
+          rightOpen ? `${rightWidth}px` : `${COLLAPSED_RAIL}px`,
+          rightOpen ? `${HANDLE_WIDTH}px` : "0px",
+          "minmax(0, 1fr)",
+        ].join(" ")
+      : leftOpen
+        ? "284px minmax(0, 1fr)"
+        : `${COLLAPSED_RAIL}px minmax(0, 1fr)`;
 
   return (
-    <main className="app-shell" style={{ gridTemplateColumns }}>
-      <aside className={`sidebar-shell ${leftOpen ? "" : "is-collapsed"}`}>
-        {leftOpen ? (
-          <div className="panel sidebar">
-            <div className="panel-header panel-header-row">
-              <div>
-                <p className="eyebrow">Campus Notes AI</p>
-                <h1>과목 목록</h1>
-                <p className="panel-copy">
-                  과목별로 현재 페이지, 메모, 첨부 이미지, 채팅 기록이 분리되어 관리됩니다.
-                </p>
-              </div>
-              <button
-                type="button"
-                className="sidebar-toggle"
-                onClick={() => setLeftOpen(false)}
-                aria-label="왼쪽 사이드바 접기"
-              >
-                ◀
-              </button>
-            </div>
-
-            <div className="subject-list">
-              {SUBJECTS.map((subject) => {
-                const active = subject.id === selectedSubjectId;
-                return (
-                  <button
-                    key={subject.id}
-                    type="button"
-                    className={`subject-card ${active ? "is-active" : ""}`}
-                    onClick={() => setSelectedSubjectId(subject.id)}
-                  >
-                    <span className={`subject-badge ${subject.accent}`}>{subject.code}</span>
-                    <strong>{subject.name}</strong>
-                    <span>{subject.instructor}</span>
+    <main className={`app-shell ${screen === "note" ? "detail-mode" : "home-mode"}`}>
+      <div className="app-grid" style={{ gridTemplateColumns: noteDetailGridColumns }}>
+        {screen === "home" ? (
+          <aside className={`sidebar-shell ${leftOpen ? "" : "is-collapsed"}`}>
+            {leftOpen ? (
+              <div className="panel sidebar samsung-sidebar">
+                <div className="sidebar-toprow">
+                  <button type="button" className="menu-button" onClick={() => setLeftOpen(false)} aria-label="메뉴 접기">
+                    ☰
                   </button>
-                );
-              })}
-            </div>
+                  <strong>Campus Notes AI</strong>
+                </div>
 
-            <div className="smart-context-card">
-              <h2>스마트 컨텍스트</h2>
-              <ul>
-                <li>기본 문맥: 현재 PDF 페이지</li>
-                <li>보조 문맥: 앞뒤 페이지</li>
-                <li>추가 문맥: 사용자 메모</li>
-                <li>추가 문맥: 판서 이미지 분석</li>
-              </ul>
-            </div>
-          </div>
-        ) : (
-          <button
-            type="button"
-            className="collapsed-toggle"
-            onClick={() => setLeftOpen(true)}
-            aria-label="왼쪽 사이드바 열기"
-          >
-            과목
-          </button>
-        )}
-      </aside>
+                <nav className="nav-list" aria-label="메인 메뉴">
+                  {NAV_ITEMS.map((item) => {
+                    const active = selectedNav === item.id && screen === "home";
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        className={`nav-item ${active ? "is-active" : ""}`}
+                        onClick={() => openHome(item.id)}
+                      >
+                        <span>{item.label}</span>
+                        <strong>{noteCounts[item.id]}</strong>
+                      </button>
+                    );
+                  })}
+                </nav>
 
-      <div
-        className={`resize-handle ${leftOpen ? "" : "is-hidden"}`}
-        onMouseDown={() => leftOpen && setDragging("left")}
-        role="separator"
-        aria-orientation="vertical"
-        aria-label="왼쪽 사이드바 크기 조절"
-      />
-
-      <section className="panel workspace">
-        <div className="workspace-topbar">
-          <div>
-            <p className="eyebrow">학습 워크스페이스</p>
-            <h2>{selectedSubject.name}</h2>
-          </div>
-
-          <div className="page-controls">
-            <button type="button" onClick={() => handlePageChange(-1)}>
-              이전
-            </button>
-            <span>
-              페이지 {currentPageIndex + 1} / {selectedSubject.pages.length}
-            </span>
-            <button type="button" onClick={() => handlePageChange(1)}>
-              다음
-            </button>
-          </div>
-        </div>
-
-        <div className="pdf-viewer">
-          <div className="pdf-toolbar">
-            <div className="pdf-toolbar-copy">
-              <span className="toolbar-title">PDF 뷰어</span>
-              <span className="muted">
-                프로젝트 폴더에 있는 PDF를 기본으로 연결했고, 다른 PDF도 직접 업로드할 수 있습니다.
-              </span>
-            </div>
-            <div className="upload-actions">
-              <button type="button" onClick={() => pdfInputRef.current?.click()}>
-                PDF 업로드
-              </button>
-              <input
-                ref={pdfInputRef}
-                className="hidden-input"
-                type="file"
-                accept="application/pdf"
-                onChange={handlePdfUpload}
-              />
-            </div>
-          </div>
-
-          {currentPdf ? (
-            <div className="pdf-preview-wrap">
-              <div className="pdf-file-meta">
-                <strong>{currentPdf.name}</strong>
-                <span>
-                  {currentPdf.isBundled
-                    ? "프로젝트에 포함된 기본 PDF"
-                    : `${selectedSubject.name} 과목에 업로드된 PDF`}
-                </span>
-              </div>
-              <iframe className="pdf-frame" src={currentPdf.previewUrl} title={currentPdf.name} />
-            </div>
-          ) : (
-            <div className="pdf-empty">
-              <strong>아직 PDF가 연결되지 않았습니다.</strong>
-              <p>같은 프로젝트 폴더에 PDF를 두거나, 위의 PDF 업로드 버튼으로 바로 연결할 수 있습니다.</p>
-            </div>
-          )}
-
-          <div className="pdf-sheet">
-            <div className="pdf-meta">현재 페이지 기반 AI 문맥</div>
-            <h3>{currentPage.title}</h3>
-            <p>{currentPage.text}</p>
-            <ul>
-              {currentPage.bullets.map((bullet) => (
-                <li key={bullet}>{bullet}</li>
-              ))}
-            </ul>
-          </div>
-
-          <div className="context-strip">
-            {nearbyPages.map((page, index) => (
-              <div key={`${page.title}-${index}`} className="context-pill">
-                <strong>{page.title}</strong>
-                <span>{page.text.slice(0, 72)}...</span>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="notes-panel">
-          <div className="notes-header">
-            <div>
-              <h3>노트 영역</h3>
-              <p>요약 메모를 작성하고 판서 사진을 첨부하면 AI 답변 문맥이 풍부해집니다.</p>
-            </div>
-            <div className="upload-actions">
-              <button type="button" onClick={() => galleryInputRef.current?.click()}>
-                이미지 업로드
-              </button>
-              <button type="button" onClick={() => cameraInputRef.current?.click()}>
-                카메라 열기
-              </button>
-              <input
-                ref={galleryInputRef}
-                className="hidden-input"
-                type="file"
-                accept="image/*"
-                onChange={handleImageUpload}
-              />
-              <input
-                ref={cameraInputRef}
-                className="hidden-input"
-                type="file"
-                accept="image/*"
-                capture="environment"
-                onChange={handleImageUpload}
-              />
-            </div>
-          </div>
-
-          <textarea
-            className="note-editor"
-            value={currentNote}
-            onChange={handleNoteChange}
-            placeholder="현재 페이지에 대한 핵심 내용을 메모해보세요..."
-          />
-
-          <div className="upload-grid">
-            {currentUploads.length === 0 ? (
-              <div className="upload-empty">
-                아직 첨부된 판서 이미지가 없습니다. 업로드하면 우측 AI 답변에 반영됩니다.
+                {selectedNav === "folders" ? (
+                  <div className="folder-nav-list">
+                    {FOLDERS.map((folder) => {
+                      const count = notesInFolders.filter((note) => note.folderId === folder.id).length;
+                      return (
+                        <button
+                          key={folder.id}
+                          type="button"
+                          className={`folder-nav-item ${selectedFolderId === folder.id ? "is-active" : ""}`}
+                          onClick={() => handleFolderSelect(folder.id)}
+                        >
+                          <span>{folder.name}</span>
+                          <strong>{count}</strong>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
               </div>
             ) : (
-              currentUploads.map((upload) => (
-                <article key={upload.id} className="upload-card">
-                  <img src={upload.previewUrl} alt={upload.name} />
-                  <div>
-                    <strong>{upload.name}</strong>
-                    <p>{upload.analysis}</p>
-                  </div>
-                </article>
-              ))
-            )}
-          </div>
-        </div>
-      </section>
-
-      <div
-        className={`resize-handle ${rightOpen ? "" : "is-hidden"}`}
-        onMouseDown={() => rightOpen && setDragging("right")}
-        role="separator"
-        aria-orientation="vertical"
-        aria-label="오른쪽 사이드바 크기 조절"
-      />
-
-      <aside className={`sidebar-shell ${rightOpen ? "" : "is-collapsed"}`}>
-        {rightOpen ? (
-          <div className="panel chat-panel">
-            <div className="panel-header panel-header-row">
-              <div>
-                <p className="eyebrow">AI Assistant</p>
-                <h2>페이지 기반 질의응답</h2>
-                <p className="panel-copy">
-                  현재 페이지, 인접 페이지, 메모, 이미지 정보를 조합해 임시 응답을 생성합니다.
-                </p>
-              </div>
               <button
                 type="button"
-                className="sidebar-toggle"
-                onClick={() => setRightOpen(false)}
-                aria-label="오른쪽 사이드바 접기"
+                className="collapsed-toggle"
+                onClick={() => setLeftOpen(true)}
+                aria-label="왼쪽 사이드바 열기"
               >
-                ▶
+                메뉴
               </button>
-            </div>
-
-            <div className="chat-meta">
-              <span>{selectedSubject.code}</span>
-              <span>{currentPage.title}</span>
-            </div>
-
-            <div className="chat-thread">
-              {messages.map((message) => (
-                <div
-                  key={message.id}
-                  className={`chat-bubble ${message.role === "assistant" ? "assistant" : "user"}`}
-                >
-                  <span className="bubble-role">{message.role === "assistant" ? "AI" : "나"}</span>
-                  <p>{message.text}</p>
-                </div>
-              ))}
-
-              {isThinking ? (
-                <div className="chat-bubble assistant">
-                  <span className="bubble-role">AI</span>
-                  <p>현재 페이지와 메모, 이미지 문맥을 바탕으로 답변을 정리하는 중입니다...</p>
-                </div>
-              ) : null}
-            </div>
-
-            <div className="chat-composer">
-              <textarea
-                value={question}
-                onChange={(event) => setQuestion(event.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder="현재 페이지 내용에 대해 질문해보세요..."
-              />
-              <button type="button" onClick={handleAsk}>
-                질문하기
-              </button>
-            </div>
-          </div>
+            )}
+          </aside>
         ) : (
-          <button
-            type="button"
-            className="collapsed-toggle"
-            onClick={() => setRightOpen(true)}
-            aria-label="오른쪽 사이드바 열기"
-          >
-            AI
-          </button>
+          <>
+            <aside className={`sidebar-shell note-ai-shell ${rightOpen ? "" : "is-collapsed"}`}>
+              {rightOpen ? (
+                <div className="panel chat-panel note-ai-panel">
+                  <div className="panel-header panel-header-row">
+                    <div>
+                      <p className="eyebrow">AI Assistant</p>
+                      <h2>페이지 기반 질의응답</h2>
+                    </div>
+                    <button
+                      type="button"
+                      className="sidebar-toggle"
+                      onClick={() => setRightOpen(false)}
+                      aria-label="AI 어시스턴트 접기"
+                    >
+                      ◀
+                    </button>
+                  </div>
+
+                  <div className="chat-meta">
+                    <span>{selectedNote.code}</span>
+                    <span>{currentPage.title}</span>
+                  </div>
+
+                  <div className="chat-thread">
+                    {messages.map((message) => (
+                      <div
+                        key={message.id}
+                        className={`chat-bubble ${message.role === "assistant" ? "assistant" : "user"}`}
+                      >
+                        <span className="bubble-role">{message.role === "assistant" ? "AI" : "나"}</span>
+                        <p>{message.text}</p>
+                      </div>
+                    ))}
+
+                    {isThinking ? (
+                      <div className="chat-bubble assistant">
+                        <span className="bubble-role">AI</span>
+                        <p>현재 페이지와 메모, 이미지 문맥을 바탕으로 답변을 정리하는 중입니다...</p>
+                      </div>
+                    ) : null}
+                  </div>
+
+                  <div className="chat-composer">
+                    <textarea
+                      value={question}
+                      onChange={(event) => setQuestion(event.target.value)}
+                      onKeyDown={handleKeyDown}
+                      placeholder="현재 페이지 내용에 대해 질문해보세요..."
+                    />
+                    <button type="button" onClick={handleAsk}>
+                      질문하기
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  className="collapsed-toggle"
+                  onClick={() => setRightOpen(true)}
+                  aria-label="AI 어시스턴트 열기"
+                >
+                  AI
+                </button>
+              )}
+            </aside>
+
+            <div
+              className={`resize-handle ${rightOpen ? "" : "is-hidden"}`}
+              onMouseDown={() => rightOpen && setDragging("note-ai")}
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="AI 어시스턴트 너비 조절"
+            />
+          </>
         )}
-      </aside>
+
+        {screen === "home" ? (
+          <section className="panel home-panel samsung-home-panel">
+            <header className="home-header samsung-home-header">
+              <h2>{mainTitle}</h2>
+
+              <div className="home-toolbar">
+                <div className="header-actions samsung-actions">
+                  <button type="button">노트 작성</button>
+                  <button type="button">PDF 가져오기</button>
+                  <button type="button">편집</button>
+                  <button type="button">보기 방식</button>
+                </div>
+                <div className="search-shell">
+                  <input
+                    type="search"
+                    value={searchQuery}
+                    onChange={(event) => setSearchQuery(event.target.value)}
+                    placeholder="검색"
+                    aria-label="노트 검색"
+                  />
+                </div>
+              </div>
+            </header>
+
+            {selectedNav === "folders" ? (
+              <>
+                <div className="folder-strip">
+                  {FOLDERS.map((folder) => {
+                    const count = notesInFolders.filter((note) => note.folderId === folder.id).length;
+                    return (
+                      <button
+                        key={folder.id}
+                        type="button"
+                        className={`folder-card samsung-folder-card ${selectedFolderId === folder.id ? "is-active" : ""}`}
+                        onClick={() => handleFolderSelect(folder.id)}
+                      >
+                        <div className="folder-tab" />
+                        <div className="folder-card-meta">{count}</div>
+                        <strong>{folder.name}</strong>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="notes-toolbar-row">
+                  <button type="button" className="sort-chip">
+                    만든 날짜순
+                  </button>
+                </div>
+
+                <div className="note-card-grid samsung-note-grid">
+                  {visibleHomeNotes.map((note) => (
+                    <button
+                      key={note.id}
+                      type="button"
+                      className={`note-card samsung-note-card ${note.deleted ? "is-trash" : ""}`}
+                      onClick={() => openNote(note.id)}
+                    >
+                      <div className={`note-preview ${getPreviewVariant(note)} ${note.accent}`}>
+                        <span className="preview-title">{formatPreviewTitle(note)}</span>
+                        <span className="preview-code">{note.code}</span>
+                      </div>
+                      <strong>{note.name}</strong>
+                      <div className="note-card-meta compact">
+                        <span>{note.updatedAt}</span>
+                      </div>
+                    </button>
+                  ))}
+
+                  {visibleHomeNotes.length === 0 ? (
+                    <div className="empty-state-card">표시할 노트가 없습니다.</div>
+                  ) : null}
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="notes-toolbar-row">
+                  <button type="button" className="sort-chip">
+                    만든 날짜순
+                  </button>
+                </div>
+
+                <div className="note-card-grid samsung-note-grid">
+                  {visibleHomeNotes.map((note) => (
+                    <button
+                      key={note.id}
+                      type="button"
+                      className={`note-card samsung-note-card ${note.deleted ? "is-trash" : ""}`}
+                      onClick={() => openNote(note.id)}
+                    >
+                      <div className={`note-preview ${getPreviewVariant(note)} ${note.accent}`}>
+                        <span className="preview-title">{formatPreviewTitle(note)}</span>
+                        <span className="preview-code">{note.code}</span>
+                      </div>
+                      <strong>{note.name}</strong>
+                      <div className="note-card-meta compact">
+                        <span>{note.updatedAt}</span>
+                      </div>
+                    </button>
+                  ))}
+
+                  {visibleHomeNotes.length === 0 ? (
+                    <div className="empty-state-card">표시할 노트가 없습니다.</div>
+                  ) : null}
+                </div>
+              </>
+            )}
+          </section>
+        ) : (
+          <>
+            <section className="panel workspace">
+              <div className="workspace-topbar">
+                <div className="workspace-title-row">
+                  <button type="button" className="back-link" onClick={() => setScreen("home")}>
+                    ← 메인으로
+                  </button>
+                  <h2>{selectedNote.name}</h2>
+                </div>
+              </div>
+
+              <div className="pdf-viewer annotation-workspace">
+                <div className="pdf-toolbar annotation-toolbar">
+                  <div className="annotation-actions">
+                    <button
+                      type="button"
+                      className={annotationMode === "draw" ? "is-active" : ""}
+                      onClick={() => setAnnotationMode("draw")}
+                    >
+                      손글씨
+                    </button>
+                    <button
+                      type="button"
+                      className={annotationMode === "text" ? "is-active" : ""}
+                      onClick={() => setAnnotationMode("text")}
+                    >
+                      타이핑
+                    </button>
+                    <button
+                      type="button"
+                      className={annotationMode === "erase" ? "is-active" : ""}
+                      onClick={() => setAnnotationMode("erase")}
+                    >
+                      지우개
+                    </button>
+                    <button
+                      type="button"
+                      className={annotationMode === "capture" ? "is-active" : ""}
+                      onClick={() => setAnnotationMode("capture")}
+                    >
+                      영역 캡처
+                    </button>
+                    <button type="button" onClick={handleClearAnnotations}>
+                      현재 페이지 지우기
+                    </button>
+                    <button type="button" onClick={() => galleryInputRef.current?.click()}>
+                      이미지 업로드
+                    </button>
+                    <button type="button" onClick={() => cameraInputRef.current?.click()}>
+                      카메라 열기
+                    </button>
+                    <button type="button" onClick={() => pdfInputRef.current?.click()}>
+                      PDF 업로드
+                    </button>
+                    <input
+                      ref={galleryInputRef}
+                      className="hidden-input"
+                      type="file"
+                      accept="image/*"
+                      onChange={handleImageUpload}
+                    />
+                    <input
+                      ref={cameraInputRef}
+                      className="hidden-input"
+                      type="file"
+                      accept="image/*"
+                      capture="environment"
+                      onChange={handleImageUpload}
+                    />
+                    <input
+                      ref={pdfInputRef}
+                      className="hidden-input"
+                      type="file"
+                      accept="application/pdf"
+                      onChange={handlePdfUpload}
+                    />
+                  </div>
+                </div>
+
+                {currentPdf ? (
+                  <div className="annotation-board">
+                    <div className="annotation-stage" ref={annotationStageRef}>
+                      <div className="annotation-scroll" ref={annotationScrollRef}>
+                        {Array.from({ length: renderedPageCount }, (_, pageIndex) => {
+                          const pageKeyForRender = `${selectedNote.id}:${pageIndex}`;
+                          const pageStrokes = strokesByPage[pageKeyForRender] ?? [];
+                          const pageTypedNote = notesByPage[pageKeyForRender] ?? "";
+                          const pageSize = pdfPageSizes[pageIndex] ?? { width: 760, height: 980 };
+
+                          return (
+                            <div
+                              key={pageKeyForRender}
+                              className="paper-stage"
+                              ref={(node) => {
+                                if (node) {
+                                  pageSurfaceRefs.current[pageIndex] = node;
+                                }
+                              }}
+                              style={{
+                                width: `${pageSize.width * pageZoom}px`,
+                                minHeight: `${pageSize.height * pageZoom}px`,
+                              }}
+                            >
+                              <div
+                                className="paper-zoom-surface"
+                                style={{
+                                  width: `${pageSize.width}px`,
+                                  height: `${pageSize.height}px`,
+                                  transform: `scale(${pageZoom})`,
+                                }}
+                              >
+                                <canvas
+                                  ref={(node) => {
+                                    if (node) {
+                                      pdfCanvasRefs.current[pageIndex] = node;
+                                    }
+                                  }}
+                                  className="pdf-canvas"
+                                />
+                                {pdfRenderError && pageIndex === 0 ? (
+                                  <div className="pdf-render-error">{pdfRenderError}</div>
+                                ) : null}
+                                <svg
+                                  className={`annotation-layer ${annotationMode === "text" ? "is-disabled" : ""}`}
+                                  viewBox={`0 0 ${pageSize.width} ${pageSize.height}`}
+                                  preserveAspectRatio="none"
+                                  onPointerDown={(event) => handleAnnotationPointerDown(pageIndex, event)}
+                                  onPointerMove={(event) => handleAnnotationPointerMove(pageIndex, event)}
+                                  onPointerUp={handleAnnotationPointerUp}
+                                  onPointerLeave={handleAnnotationPointerUp}
+                                  onPointerCancel={handleAnnotationPointerUp}
+                                  onLostPointerCapture={handleAnnotationPointerUp}
+                                >
+                                  {pageStrokes.map((stroke) => (
+                                    <path
+                                      key={stroke.id}
+                                      d={buildStrokePath(stroke.points, pageSize.width, pageSize.height)}
+                                      fill="none"
+                                      stroke="#1d4ed8"
+                                      strokeWidth="4"
+                                      strokeLinecap="round"
+                                      strokeLinejoin="round"
+                                    />
+                                  ))}
+                                  {captureSelection && captureSelection.pageIndex === pageIndex ? (
+                                    <path
+                                      d={buildSelectionPath(
+                                        captureSelection.points,
+                                        pageSize.width,
+                                        pageSize.height,
+                                      )}
+                                      fill="rgba(59, 130, 246, 0.12)"
+                                      stroke="#2563eb"
+                                      strokeWidth="2.5"
+                                      strokeDasharray="10 8"
+                                      strokeLinecap="round"
+                                      strokeLinejoin="round"
+                                    />
+                                  ) : null}
+                                </svg>
+
+                                <div className="annotation-text-layer">
+                                  <textarea
+                                    ref={pageIndex === currentPageIndex ? typingTextareaRef : null}
+                                    className={`annotation-typing-pad ${
+                                      annotationMode === "text" && pageIndex === currentPageIndex ? "is-active" : ""
+                                    }`}
+                                    value={pageTypedNote}
+                                    onChange={(event) => handleTypedNoteChange(event, pageIndex)}
+                                    onKeyDown={(event) => handleTypingKeyDown(event, pageIndex)}
+                                    placeholder=""
+                                    aria-label={`${pageIndex + 1}페이지 타이핑 메모`}
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {currentUploads.length > 0 ? (
+                      <div className="paper-upload-strip">
+                        {currentUploads.map((upload) => (
+                          <figure key={upload.id} className="paper-upload-card">
+                            <img src={upload.previewUrl} alt={upload.name} />
+                            <figcaption>{upload.name}</figcaption>
+                          </figure>
+                        ))}
+                      </div>
+                    ) : null}
+
+                    {currentCaptures.length > 0 ? (
+                      <div className="capture-strip">
+                        {currentCaptures.map((capture) => (
+                          <figure key={capture.id} className="capture-card">
+                            <img src={capture.previewUrl} alt={`캡처 ${capture.pageIndex + 1}`} />
+                            <figcaption>{capture.pageIndex + 1}페이지 캡처</figcaption>
+                          </figure>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : (
+                  <div className="pdf-empty">
+                    <strong>아직 PDF가 연결되지 않았습니다.</strong>
+                    <p>PDF를 연결하면 그 위에 바로 필기하고 타이핑 메모를 남길 수 있습니다.</p>
+                  </div>
+                )}
+              </div>
+            </section>
+          </>
+        )}
+      </div>
     </main>
   );
 }
