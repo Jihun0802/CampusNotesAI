@@ -103,6 +103,59 @@ button {
   grid-template-rows: auto minmax(0, 1fr);
 }
 
+.note-detail-panel {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  border-radius: 0;
+  overflow: visible;
+}
+
+.note-study-shell {
+  min-height: calc(100vh - 52px);
+  border-radius: 22px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: #edf1f6;
+  overflow: hidden;
+}
+
+.note-workspace-grid {
+  min-height: calc(100vh - 52px);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 0;
+}
+
+.note-sidebar-topbar {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.note-inline-handle {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  width: 0;
+  background: transparent;
+  border-radius: 0;
+  overflow: visible;
+}
+
+.note-toolbar-bar {
+  grid-column: 3;
+  grid-row: 1;
+  margin-left: -2px;
+}
+
+.note-embedded-ai {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.note-content {
+  grid-column: 3;
+  grid-row: 2;
+}
+
 .panel-header h1,
 .panel-header h2,
 .home-header h2,
@@ -146,6 +199,93 @@ button {
 
 .workspace-title-row h2 {
   margin: 0;
+}
+
+.workspace-topbar {
+  align-items: center;
+}
+
+.note-top-actions {
+  justify-content: flex-end;
+  flex: 1;
+  min-width: 0;
+}
+
+.note-toolbar-bar,
+.note-sidebar-topbar {
+  min-height: 72px;
+  padding: 14px 18px;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+  background: rgba(255, 255, 255, 0.42);
+  backdrop-filter: blur(8px);
+}
+
+.note-toolbar-bar {
+  border-top-right-radius: 18px;
+}
+
+.note-sidebar-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-top-left-radius: 18px;
+  border-right: 1px solid rgba(15, 23, 42, 0.08);
+}
+
+.note-sidebar-topbar strong {
+  display: block;
+  color: #111827;
+  font-size: 0.95rem;
+}
+
+.collapsed-toggle--inline {
+  width: 100%;
+  min-height: 44px;
+  writing-mode: initial;
+  text-orientation: initial;
+  border-radius: 12px;
+}
+
+.note-embedded-ai,
+.note-content {
+  min-height: 0;
+}
+
+.note-embedded-ai {
+  border-right: 1px solid rgba(15, 23, 42, 0.08);
+  background: rgba(255, 255, 255, 0.28);
+}
+
+.note-embedded-ai.is-collapsed {
+  display: grid;
+  place-items: start center;
+  padding-top: 16px;
+}
+
+.note-ai-collapsed-marker {
+  width: 100%;
+  height: 100%;
+}
+
+.note-ai-panel--embedded {
+  padding: 18px;
+  background: transparent;
+}
+
+.note-content {
+  overflow: hidden;
+  min-width: 0;
+}
+
+.note-content .annotation-workspace {
+  height: 100%;
+  padding: 18px;
+}
+
+.note-inline-handle {
+  min-height: 100%;
+  border-radius: 0;
 }
 
 .sidebar-toggle,
@@ -290,6 +430,10 @@ button {
   gap: 2px;
 }
 
+.samsung-actions button {
+  border-radius: 14px;
+}
+
 .search-shell {
   min-width: 280px;
 }
@@ -350,6 +494,10 @@ button {
   line-height: 1.3;
 }
 
+.folder-card {
+  cursor: pointer;
+}
+
 .notes-toolbar-row {
   display: flex;
   justify-content: flex-end;
@@ -374,6 +522,7 @@ button {
   background: transparent;
   padding: 0;
   text-align: left;
+  cursor: pointer;
 }
 
 .samsung-note-card strong {
@@ -505,11 +654,6 @@ button {
   gap: 16px;
 }
 
-.annotation-toolbar {
-  justify-content: flex-start;
-  align-items: center;
-}
-
 .annotation-actions {
   display: flex;
   align-items: center;
@@ -524,6 +668,21 @@ button {
   background: #eef2ff;
   color: #1e3a8a;
   font-weight: 700;
+}
+
+.annotation-actions--compact {
+  gap: 8px;
+}
+
+.annotation-actions--compact button {
+  min-width: 44px;
+  height: 44px;
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.92rem;
+  line-height: 1;
 }
 
 .annotation-actions button.is-active {
@@ -543,12 +702,12 @@ button {
   min-height: 0;
   border-radius: 20px;
   overflow: hidden;
-  background: #edf1f6;
-  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: transparent;
+  border: 0;
 }
 
 .annotation-scroll {
-  max-height: calc(100vh - 220px);
+  max-height: calc(100vh - 120px);
   overflow-y: auto;
   padding: 28px 0 36px;
   overscroll-behavior-y: contain;
@@ -666,19 +825,28 @@ button {
 .annotation-text-layer {
   z-index: 3;
   pointer-events: none;
+  overflow: hidden;
+}
+
+.annotation-text-layer.is-active {
+  pointer-events: auto;
+  cursor: text;
 }
 
 .annotation-typing-pad {
   width: 100%;
+  height: 100%;
   min-height: 100%;
+  max-height: 100%;
   border: 0;
-  padding: 56px 64px 80px;
+  padding: 24px 64px 24px;
   background: transparent;
   color: #0f172a;
   font-size: 1.08rem;
   line-height: 2;
   resize: none;
   outline: none;
+  overflow: hidden;
   pointer-events: none;
 }
 
@@ -840,6 +1008,100 @@ button {
   min-height: 96px;
 }
 
+.context-menu {
+  position: fixed;
+  z-index: 40;
+  min-width: 180px;
+  padding: 8px;
+  border-radius: 16px;
+  background: #ffffff;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  box-shadow: 0 18px 36px rgba(15, 23, 42, 0.18);
+}
+
+.context-menu button {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: #232329;
+  text-align: left;
+  padding: 10px 12px;
+  border-radius: 10px;
+}
+
+.context-menu button:hover {
+  background: #f3f4f6;
+}
+
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.28);
+}
+
+.confirm-dialog {
+  width: min(100%, 420px);
+  padding: 22px;
+  border-radius: 22px;
+  background: #ffffff;
+  box-shadow: 0 24px 48px rgba(15, 23, 42, 0.18);
+}
+
+.confirm-dialog strong {
+  display: block;
+  margin-bottom: 10px;
+  font-size: 1.05rem;
+  color: #0f172a;
+}
+
+.confirm-dialog p {
+  margin: 0;
+  color: #5e6b7a;
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.dialog-actions button {
+  border: 0;
+  border-radius: 12px;
+  padding: 10px 14px;
+  background: #e5e7eb;
+  color: #111827;
+}
+
+.dialog-actions .danger {
+  background: #dc2626;
+  color: #ffffff;
+}
+
+.trash-folder-dock {
+  position: fixed;
+  left: 24px;
+  bottom: 24px;
+  z-index: 10;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-width: 480px;
+}
+
+.trash-folder-chip {
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.84);
+  color: #ffffff;
+  font-size: 0.82rem;
+}
+
 .resize-handle {
   width: 8px;
   min-height: calc(100vh - 24px);
@@ -847,6 +1109,13 @@ button {
   border-radius: 999px;
   background: rgba(24, 35, 50, 0.08);
   cursor: col-resize;
+}
+
+.note-inline-handle.resize-handle {
+  width: 0;
+  min-height: 100%;
+  background: transparent;
+  position: relative;
 }
 
 .resize-handle.is-hidden {
@@ -860,9 +1129,32 @@ button {
   background: rgba(24, 35, 50, 0.18);
 }
 
+.note-inline-handle.resize-handle::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -4px;
+  width: 8px;
+  cursor: col-resize;
+}
+
+.note-inline-handle.resize-handle:hover {
+  background: transparent;
+}
+
+.note-inline-handle.resize-handle:hover {
+  background: rgba(59, 130, 246, 0.22);
+}
+
 @media (max-width: 1180px) {
   .app-grid {
     grid-template-columns: 1fr !important;
+  }
+
+  .note-workspace-grid {
+    grid-template-columns: 1fr !important;
+    grid-template-rows: auto auto auto minmax(0, 1fr);
   }
 
   .sidebar-shell {
@@ -876,6 +1168,17 @@ button {
 
   .resize-handle {
     display: none;
+  }
+
+  .note-toolbar-bar,
+  .note-sidebar-topbar {
+    border-left: 0;
+    border-radius: 0;
+  }
+
+  .note-embedded-ai {
+    border-right: 0;
+    border-bottom: 1px solid rgba(15, 23, 42, 0.06);
   }
 
   .context-strip {
@@ -905,6 +1208,10 @@ button {
     align-items: stretch;
   }
 
+  .note-top-actions {
+    justify-content: flex-start;
+  }
+
   .search-shell {
     min-width: 0;
   }
@@ -923,7 +1230,7 @@ button {
   }
 
   .annotation-scroll {
-    max-height: calc(100vh - 260px);
+    max-height: calc(100vh - 210px);
     padding: 18px 0 24px;
   }
 

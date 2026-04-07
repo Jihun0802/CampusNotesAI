@@ -11,14 +11,23 @@ const HANDLE_WIDTH = 8;
 const RIGHT_MIN = 320;
 const NOTE_AI_MIN = 260;
 const NOTE_AI_COLLAPSE_THRESHOLD = 240;
+const TEXT_LAYER_PADDING = {
+  top: 56,
+  right: 64,
+  bottom: 80,
+  left: 64,
+};
+const DEFAULT_TEXT_BOX_WIDTH_RATIO = 0.72;
+const MIN_TEXT_BOX_WIDTH_RATIO = 0.18;
+const MIN_TEXT_BOX_HEIGHT_RATIO = 0.05;
 
-const FOLDERS = [
+const INITIAL_FOLDERS = [
   { id: "freshman-1", name: "1학년 1학기" },
   { id: "freshman-2", name: "1학년 2학기" },
   { id: "toeic", name: "토익 공부" },
 ];
 
-const NOTES = [
+const INITIAL_NOTES = [
   {
     id: "hci",
     name: "HCI 설계",
@@ -249,10 +258,6 @@ function makeImageAnalysis(fileName, currentPage) {
   return `${currentPage.title}와 연결된 판서 이미지로 보이며, ${stem} 키워드가 강조된 자료입니다.`;
 }
 
-function getFolderById(folderId) {
-  return FOLDERS.find((folder) => folder.id === folderId) ?? null;
-}
-
 function getPreviewVariant(note) {
   if (note.code === "TOEIC") {
     return "preview-handwriting";
@@ -348,21 +353,221 @@ function buildSelectionPath(points, width, height) {
   return `${commands.join(" ")} Z`;
 }
 
+function cloneTextBoxes(textBoxes = []) {
+  return textBoxes.map((textBox) => ({ ...textBox }));
+}
+
+function sortTextBoxes(textBoxes = []) {
+  return [...textBoxes].sort((left, right) => {
+    if (left.y === right.y) {
+      return left.x - right.x;
+    }
+    return left.y - right.y;
+  });
+}
+
+function buildNoteTextFromTextBoxes(textBoxes = []) {
+  return sortTextBoxes(textBoxes)
+    .map((textBox) => textBox.text.trim())
+    .filter(Boolean)
+    .join("\n");
+}
+
+function migrateNotesToTextBoxes(savedNotes = {}) {
+  return Object.fromEntries(
+    Object.entries(savedNotes)
+      .filter(([, text]) => typeof text === "string" && text.trim())
+      .map(([pageKey, text]) => [
+        pageKey,
+        [
+          {
+            id: `migrated-${pageKey}`,
+            x: 0.084,
+            y: 0.057,
+            width: DEFAULT_TEXT_BOX_WIDTH_RATIO,
+            text,
+          },
+        ],
+      ]),
+  );
+}
+
+function buildNotesFromTextBoxes(textBoxesByPage = {}) {
+  return Object.fromEntries(
+    Object.entries(textBoxesByPage)
+      .map(([pageKey, textBoxes]) => [pageKey, buildNoteTextFromTextBoxes(textBoxes)])
+      .filter(([, text]) => text),
+  );
+}
+
+function measureTextBoxHeight(textarea, nextValue, maxHeight) {
+  const computedStyle = window.getComputedStyle(textarea);
+  const mirror = document.createElement("div");
+  const mirroredProperties = [
+    "boxSizing",
+    "width",
+    "paddingTop",
+    "paddingRight",
+    "paddingBottom",
+    "paddingLeft",
+    "borderTopWidth",
+    "borderRightWidth",
+    "borderBottomWidth",
+    "borderLeftWidth",
+    "fontFamily",
+    "fontSize",
+    "fontWeight",
+    "fontStyle",
+    "letterSpacing",
+    "lineHeight",
+    "textTransform",
+    "textAlign",
+    "whiteSpace",
+    "wordBreak",
+    "overflowWrap",
+  ];
+
+  mirroredProperties.forEach((property) => {
+    mirror.style[property] = computedStyle[property];
+  });
+
+  mirror.style.position = "absolute";
+  mirror.style.visibility = "hidden";
+  mirror.style.pointerEvents = "none";
+  mirror.style.left = "-9999px";
+  mirror.style.top = "0";
+  mirror.style.whiteSpace = "pre-wrap";
+  mirror.style.wordBreak = "break-word";
+  mirror.style.overflowWrap = "break-word";
+  mirror.style.height = "auto";
+  mirror.style.minHeight = "0";
+  mirror.style.maxHeight = "none";
+  mirror.style.overflow = "visible";
+
+  mirror.textContent = nextValue || ".";
+  document.body.appendChild(mirror);
+  const measuredHeight = Math.min(mirror.scrollHeight, maxHeight);
+
+  document.body.removeChild(mirror);
+  return measuredHeight;
+}
+
+function wouldTextBoxOverflow(textarea, nextValue, maxHeight) {
+  const computedStyle = window.getComputedStyle(textarea);
+  const mirror = document.createElement("div");
+  const mirroredProperties = [
+    "boxSizing",
+    "width",
+    "paddingTop",
+    "paddingRight",
+    "paddingBottom",
+    "paddingLeft",
+    "borderTopWidth",
+    "borderRightWidth",
+    "borderBottomWidth",
+    "borderLeftWidth",
+    "fontFamily",
+    "fontSize",
+    "fontWeight",
+    "fontStyle",
+    "letterSpacing",
+    "lineHeight",
+    "textTransform",
+    "textAlign",
+    "whiteSpace",
+    "wordBreak",
+    "overflowWrap",
+  ];
+
+  mirroredProperties.forEach((property) => {
+    mirror.style[property] = computedStyle[property];
+  });
+
+  mirror.style.position = "absolute";
+  mirror.style.visibility = "hidden";
+  mirror.style.pointerEvents = "none";
+  mirror.style.left = "-9999px";
+  mirror.style.top = "0";
+  mirror.style.whiteSpace = "pre-wrap";
+  mirror.style.wordBreak = "break-word";
+  mirror.style.overflowWrap = "break-word";
+  mirror.style.height = "auto";
+  mirror.style.minHeight = "0";
+  mirror.style.maxHeight = "none";
+  mirror.style.overflow = "visible";
+
+  mirror.textContent = nextValue || ".";
+  document.body.appendChild(mirror);
+  const wouldOverflow = mirror.scrollHeight > maxHeight;
+  document.body.removeChild(mirror);
+  return wouldOverflow;
+}
+
+function getTextareaMetrics(textarea) {
+  const computedStyle = window.getComputedStyle(textarea);
+  const lineHeight =
+    Number.parseFloat(computedStyle.lineHeight) || Number.parseFloat(computedStyle.fontSize) * 1.4;
+  const paddingTop = Number.parseFloat(computedStyle.paddingTop) || 0;
+  const paddingBottom = Number.parseFloat(computedStyle.paddingBottom) || 0;
+  const availableHeight = Math.max(textarea.clientHeight - paddingTop - paddingBottom, lineHeight);
+  const maxLines = Math.max(1, Math.floor(availableHeight / lineHeight));
+
+  return {
+    lineHeight,
+    paddingTop,
+    maxLines,
+  };
+}
+
+function getLineIndexFromCaret(value, caretIndex) {
+  return value.slice(0, caretIndex).split("\n").length - 1;
+}
+
+function getLineStartIndex(value, lineIndex) {
+  if (lineIndex <= 0) {
+    return 0;
+  }
+
+  let currentLine = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    if (value[index] === "\n") {
+      currentLine += 1;
+      if (currentLine === lineIndex) {
+        return index + 1;
+      }
+    }
+  }
+
+  return value.length;
+}
+
+function ensureLineExists(value, lineIndex) {
+  const currentLineCount = value === "" ? 1 : value.split("\n").length;
+  if (lineIndex < currentLineCount) {
+    return value;
+  }
+
+  return `${value}${"\n".repeat(lineIndex - currentLineCount + 1)}`;
+}
+
 export default function App() {
+  const [folders, setFolders] = useState(INITIAL_FOLDERS);
+  const [notes, setNotes] = useState(INITIAL_NOTES);
   const [screen, setScreen] = useState("home");
   const [selectedNav, setSelectedNav] = useState("folders");
   const [selectedFolderId, setSelectedFolderId] = useState(null);
   const [selectedNoteId, setSelectedNoteId] = useState("ml");
   const [searchQuery, setSearchQuery] = useState("");
   const [pageByNote, setPageByNote] = useState(
-    NOTES.reduce((acc, note) => {
+    INITIAL_NOTES.reduce((acc, note) => {
       acc[note.id] = 0;
       return acc;
     }, {}),
   );
   const [notesByPage, setNotesByPage] = useState({});
+  const [textBoxesByPage, setTextBoxesByPage] = useState({});
   const [chatByNote, setChatByNote] = useState(
-    NOTES.reduce((acc, note) => {
+    INITIAL_NOTES.reduce((acc, note) => {
       acc[note.id] = INITIAL_MESSAGES;
       return acc;
     }, {}),
@@ -387,15 +592,19 @@ export default function App() {
   const [captureSelection, setCaptureSelection] = useState(null);
   const [pageZoom, setPageZoom] = useState(1);
   const [dragging, setDragging] = useState(null);
+  const [contextMenu, setContextMenu] = useState(null);
+  const [confirmDialog, setConfirmDialog] = useState(null);
   const cameraInputRef = useRef(null);
   const galleryInputRef = useRef(null);
   const pdfInputRef = useRef(null);
-  const typingTextareaRef = useRef(null);
+  const typingTextareaRefs = useRef({});
+  const textBoxRefs = useRef({});
   const uploadUrlsRef = useRef([]);
   const annotationStageRef = useRef(null);
   const annotationScrollRef = useRef(null);
   const pdfCanvasRefs = useRef({});
   const pageSurfaceRefs = useRef({});
+  const pendingTextFocusRef = useRef(null);
   const activeStrokeIdRef = useRef(null);
   const activePointerIdRef = useRef(null);
   const isDrawingRef = useRef(false);
@@ -403,6 +612,7 @@ export default function App() {
   const liveStrokePointsRef = useRef([]);
   const drawSyncFrameRef = useRef(null);
   const notesByPageRef = useRef({});
+  const textBoxesByPageRef = useRef({});
   const strokesByPageRef = useRef({});
   const undoHistoryRef = useRef([]);
   const redoHistoryRef = useRef([]);
@@ -410,8 +620,9 @@ export default function App() {
   const [pdfPageSizes, setPdfPageSizes] = useState([]);
   const [pdfRenderError, setPdfRenderError] = useState("");
   const [pdfPageCount, setPdfPageCount] = useState(0);
+  const [activeTextBox, setActiveTextBox] = useState(null);
 
-  const selectedNote = NOTES.find((note) => note.id === selectedNoteId) ?? NOTES[0];
+  const selectedNote = notes.find((note) => note.id === selectedNoteId) ?? notes[0] ?? INITIAL_NOTES[0];
   const currentPageIndex = pageByNote[selectedNote.id] ?? 0;
   const safeContentPageIndex = Math.min(currentPageIndex, selectedNote.pages.length - 1);
   const currentPage = selectedNote.pages[safeContentPageIndex];
@@ -421,7 +632,7 @@ export default function App() {
   const currentUploads = uploadsByPage[pageKey] ?? [];
   const currentPdf = pdfByNote[selectedNote.id] ?? null;
   const messages = chatByNote[selectedNote.id] ?? INITIAL_MESSAGES;
-  const selectedFolder = getFolderById(selectedFolderId);
+  const selectedFolder = folders.find((folder) => folder.id === selectedFolderId) ?? null;
   const renderedPageCount = pdfPageCount || selectedNote.pages.length;
 
   const nearbyPages = useMemo(() => {
@@ -430,37 +641,38 @@ export default function App() {
 
   const noteCounts = useMemo(
     () => ({
-      all: NOTES.filter((note) => !note.deleted).length,
-      favorites: NOTES.filter((note) => note.favorite && !note.deleted).length,
-      trash: NOTES.filter((note) => note.deleted).length,
-      folders: FOLDERS.length,
+      all: notes.filter((note) => !note.deleted).length,
+      favorites: notes.filter((note) => note.favorite && !note.deleted).length,
+      trash: notes.filter((note) => note.deleted).length,
+      folders: folders.filter((folder) => !folder.deleted).length,
     }),
-    [],
+    [folders, notes],
   );
 
-  const notesInFolders = useMemo(() => NOTES.filter((note) => !note.deleted && note.folderId), []);
-  const ungroupedNotes = useMemo(() => NOTES.filter((note) => !note.deleted && !note.folderId), []);
+  const notesInFolders = useMemo(() => notes.filter((note) => !note.deleted && note.folderId), [notes]);
+  const ungroupedNotes = useMemo(() => notes.filter((note) => !note.deleted && !note.folderId), [notes]);
+  const deletedFolders = useMemo(() => folders.filter((folder) => folder.deleted), [folders]);
 
   const filteredNotes = useMemo(() => {
     if (selectedNav === "all") {
-      return NOTES.filter((note) => !note.deleted);
+      return notes.filter((note) => !note.deleted);
     }
     if (selectedNav === "favorites") {
-      return NOTES.filter((note) => note.favorite && !note.deleted);
+      return notes.filter((note) => note.favorite && !note.deleted);
     }
     if (selectedNav === "trash") {
-      return NOTES.filter((note) => note.deleted);
+      return notes.filter((note) => note.deleted);
     }
     if (selectedFolderId) {
-      return NOTES.filter((note) => note.folderId === selectedFolderId && !note.deleted);
+      return notes.filter((note) => note.folderId === selectedFolderId && !note.deleted);
     }
     return [];
-  }, [selectedFolderId, selectedNav]);
+  }, [notes, selectedFolderId, selectedNav]);
 
   const visibleHomeNotes = useMemo(() => {
     const baseNotes = selectedNav === "folders"
       ? selectedFolder
-        ? NOTES.filter((note) => note.folderId === selectedFolder.id && !note.deleted)
+        ? notes.filter((note) => note.folderId === selectedFolder.id && !note.deleted)
         : ungroupedNotes
       : filteredNotes;
 
@@ -470,13 +682,13 @@ export default function App() {
 
     const query = searchQuery.trim().toLowerCase();
     return baseNotes.filter((note) => {
-      const folderName = getFolderById(note.folderId)?.name ?? "";
+      const folderName = folders.find((folder) => folder.id === note.folderId)?.name ?? "";
       return [note.name, note.code, note.instructor, folderName]
         .join(" ")
         .toLowerCase()
         .includes(query);
     });
-  }, [filteredNotes, searchQuery, selectedFolder, selectedNav, ungroupedNotes]);
+  }, [filteredNotes, folders, notes, searchQuery, selectedFolder, selectedNav, ungroupedNotes]);
 
   useEffect(() => {
     return () => {
@@ -491,6 +703,21 @@ export default function App() {
     setPdfPageCount(selectedNote.pages.length);
     setPdfPageSizes([]);
   }, [selectedNote.id, selectedNote.pages.length]);
+
+  useEffect(() => {
+    if (!notes.some((note) => note.id === selectedNoteId)) {
+      const fallbackNote = notes.find((note) => !note.deleted) ?? notes[0];
+      if (fallbackNote) {
+        setSelectedNoteId(fallbackNote.id);
+      }
+    }
+  }, [notes, selectedNoteId]);
+
+  useEffect(() => {
+    if (selectedFolderId && !folders.some((folder) => folder.id === selectedFolderId && !folder.deleted)) {
+      setSelectedFolderId(null);
+    }
+  }, [folders, selectedFolderId]);
 
   useEffect(() => {
     try {
@@ -523,6 +750,10 @@ export default function App() {
     localStorage.setItem("campus-notes-text", JSON.stringify(notesByPage));
     notesByPageRef.current = notesByPage;
   }, [notesByPage]);
+
+  useEffect(() => {
+    textBoxesByPageRef.current = textBoxesByPage;
+  }, [textBoxesByPage]);
 
   useEffect(() => {
     localStorage.setItem("campus-notes-strokes", JSON.stringify(strokesByPage));
@@ -660,10 +891,98 @@ export default function App() {
   }, [dragging, rightOpen]);
 
   useEffect(() => {
-    if (screen === "note" && annotationMode === "text") {
-      typingTextareaRef.current?.focus();
+    if (screen !== "note" || annotationMode !== "text" || !pendingTextFocusRef.current) {
+      return;
     }
-  }, [annotationMode, currentPageIndex, screen]);
+
+    const { pageIndex, caret, clearBlank } = pendingTextFocusRef.current;
+    const targetPageKey = `${selectedNote.id}:${pageIndex}`;
+    const currentTextarea = typingTextareaRefs.current[pageIndex];
+    let nextValue = notesByPageRef.current[targetPageKey] ?? currentTextarea?.value ?? "";
+
+    if (clearBlank && nextValue.trim().length === 0 && nextValue !== "") {
+      nextValue = "";
+    }
+
+    if (caret === "last-line" && currentTextarea) {
+      const { maxLines } = getTextareaMetrics(currentTextarea);
+      nextValue = ensureLineExists(nextValue, maxLines - 1);
+    }
+
+    if (nextValue !== (notesByPageRef.current[targetPageKey] ?? "")) {
+      notesByPageRef.current = {
+        ...notesByPageRef.current,
+        [targetPageKey]: nextValue,
+      };
+      setNotesByPage(notesByPageRef.current);
+    }
+
+    pendingTextFocusRef.current = null;
+    window.requestAnimationFrame(() => {
+      const textarea = typingTextareaRefs.current[pageIndex];
+      if (!textarea) {
+        return;
+      }
+
+      // Keep the DOM value aligned before placing the caret on a line near the bottom.
+      if (textarea.value !== nextValue) {
+        textarea.value = nextValue;
+      }
+
+      textarea.focus();
+      let position = 0;
+      if (caret === "start") {
+        position = 0;
+      } else if (caret === "end") {
+        position = nextValue.length;
+      } else if (caret === "last-line") {
+        const { maxLines } = getTextareaMetrics(textarea);
+        position = getLineStartIndex(nextValue, maxLines - 1);
+      } else {
+        position = clamp(caret, 0, nextValue.length);
+      }
+      textarea.setSelectionRange(position, position);
+    });
+  }, [annotationMode, currentPageIndex, notesByPage, screen, selectedNote.id]);
+
+  useEffect(() => {
+    if (screen !== "note") {
+      setActiveTextBox(null);
+      return;
+    }
+
+    if (annotationMode !== "text") {
+      setActiveTextBox(null);
+    }
+  }, [annotationMode, screen, selectedNote.id]);
+
+  useEffect(() => {
+    if (screen !== "note") {
+      return;
+    }
+
+    Object.entries(textBoxesByPage).forEach(([pageKeyForBoxes, textBoxes]) => {
+      const pageIndex = Number(pageKeyForBoxes.split(":")[1] ?? 0);
+      textBoxes.forEach((textBox) => {
+        resizeTextBoxElement(textBoxRefs.current[textBox.id], pageIndex, textBox);
+      });
+    });
+  }, [pageZoom, pdfPageSizes, screen, textBoxesByPage]);
+
+  useEffect(() => {
+    if (!contextMenu) {
+      return undefined;
+    }
+
+    const handleClose = () => {
+      setContextMenu(null);
+    };
+
+    window.addEventListener("mousedown", handleClose);
+    return () => {
+      window.removeEventListener("mousedown", handleClose);
+    };
+  }, [contextMenu]);
 
   useEffect(() => {
     if (screen !== "note" || !annotationScrollRef.current) {
@@ -806,11 +1125,310 @@ export default function App() {
     setRightOpen(true);
   };
 
+  const scrollToPage = (pageIndex, behavior = "smooth") => {
+    const targetPage = pageSurfaceRefs.current[pageIndex];
+    if (!targetPage) {
+      return;
+    }
+
+    annotationScrollRef.current?.scrollTo({
+      top: Math.max(targetPage.offsetTop - 20, 0),
+      behavior,
+    });
+  };
+
+  const commitTextBoxesForPage = (targetPageKey, nextTextBoxes) => {
+    const nextState = { ...textBoxesByPageRef.current };
+    if (nextTextBoxes.length === 0) {
+      delete nextState[targetPageKey];
+    } else {
+      nextState[targetPageKey] = nextTextBoxes;
+    }
+    textBoxesByPageRef.current = nextState;
+    setTextBoxesByPage(nextState);
+  };
+
+  const getPageTextBoxes = (pageIndex) => textBoxesByPageRef.current[`${selectedNote.id}:${pageIndex}`] ?? [];
+
+  const getTextBoxMaxHeight = (pageSize, textBox) =>
+    Math.max(56, pageSize.height * (1 - textBox.y) - TEXT_LAYER_PADDING.bottom);
+
+  const resizeTextBoxElement = (element, pageIndex, textBox) => {
+    if (!element || !textBox) {
+      return;
+    }
+
+    const pageSize = pdfPageSizes[pageIndex] ?? { width: 760, height: 980 };
+    const maxHeight = getTextBoxMaxHeight(pageSize, textBox);
+    element.style.height = "0px";
+    element.style.height = `${measureTextBoxHeight(element, element.value, maxHeight)}px`;
+  };
+
+  const queueTextBoxFocus = (pageIndex, boxId, caret = "end") => {
+    pendingTextFocusRef.current = { pageIndex, boxId, caret };
+    setActiveTextBox({ pageIndex, boxId });
+    setPageByNote((current) => ({
+      ...current,
+      [selectedNote.id]: pageIndex,
+    }));
+  };
+
+  const createTextBoxOnPage = (pageIndex, point = null) => {
+    const pageSize = pdfPageSizes[pageIndex] ?? { width: 760, height: 980 };
+    const leftBoundary = TEXT_LAYER_PADDING.left / pageSize.width;
+    const rightBoundary = TEXT_LAYER_PADDING.right / pageSize.width;
+    const topBoundary = TEXT_LAYER_PADDING.top / pageSize.height;
+    const bottomBoundary = TEXT_LAYER_PADDING.bottom / pageSize.height;
+    const x = clamp(
+      point?.x ?? leftBoundary,
+      leftBoundary,
+      1 - rightBoundary - MIN_TEXT_BOX_WIDTH_RATIO,
+    );
+    const y = clamp(
+      point?.y ?? topBoundary,
+      topBoundary,
+      1 - bottomBoundary - MIN_TEXT_BOX_HEIGHT_RATIO,
+    );
+    const width = clamp(
+      DEFAULT_TEXT_BOX_WIDTH_RATIO,
+      MIN_TEXT_BOX_WIDTH_RATIO,
+      1 - x - rightBoundary,
+    );
+    const nextTextBox = {
+      id: `textbox-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      x,
+      y,
+      width,
+      text: "",
+    };
+    const targetPageKey = `${selectedNote.id}:${pageIndex}`;
+    const nextTextBoxes = [...getPageTextBoxes(pageIndex), nextTextBox];
+
+    commitTextBoxesForPage(targetPageKey, nextTextBoxes);
+    queueTextBoxFocus(pageIndex, nextTextBox.id);
+    scrollToPage(pageIndex);
+    return nextTextBox;
+  };
+
+  const removeTextBoxFromPage = (pageIndex, textBoxId) => {
+    const targetPageKey = `${selectedNote.id}:${pageIndex}`;
+    const nextTextBoxes = getPageTextBoxes(pageIndex).filter((textBox) => textBox.id !== textBoxId);
+    commitTextBoxesForPage(targetPageKey, nextTextBoxes);
+    if (activeTextBox?.boxId === textBoxId) {
+      setActiveTextBox(null);
+    }
+  };
+
+  const findLastTextBoxOnPage = (pageIndex) => {
+    const sorted = sortTextBoxes(getPageTextBoxes(pageIndex));
+    return sorted[sorted.length - 1] ?? null;
+  };
+
   const handleFolderSelect = (folderId) => {
     setSelectedNav("folders");
     setScreen("home");
     setSelectedFolderId((current) => (current === folderId ? null : folderId));
     setSearchQuery("");
+  };
+
+  const activateTextMode = () => {
+    setAnnotationMode("text");
+  };
+
+  const closeContextMenu = () => {
+    setContextMenu(null);
+  };
+
+  const handleNoteContextMenu = (event, noteId) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setContextMenu({
+      type: "note",
+      id: noteId,
+      x: event.clientX,
+      y: event.clientY,
+    });
+  };
+
+  const handleFolderContextMenu = (event, folderId) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setContextMenu({
+      type: "folder",
+      id: folderId,
+      x: event.clientX,
+      y: event.clientY,
+    });
+  };
+
+  const handleCreateNote = () => {
+    const name = window.prompt("새 노트 이름을 입력하세요.");
+    if (!name?.trim()) {
+      return;
+    }
+
+    const newNoteId = `note-${Date.now()}`;
+    const folderId = selectedNav === "folders" ? selectedFolderId : null;
+    const newNote = {
+      id: newNoteId,
+      name: name.trim(),
+      code: "NEW",
+      instructor: "직접 작성",
+      accent: "accent-blue",
+      folderId,
+      favorite: false,
+      deleted: false,
+      updatedAt: "방금 생성됨",
+      pages: [
+        {
+          title: "새 노트",
+          text: "새로 만든 노트입니다. PDF를 연결하고 메모를 작성해보세요.",
+          bullets: [
+            "상단에서 PDF를 업로드할 수 있습니다.",
+            "손글씨와 타이핑 메모를 함께 사용할 수 있습니다.",
+            "AI Assistant는 현재 페이지 문맥을 기준으로 응답합니다.",
+          ],
+        },
+      ],
+    };
+
+    setNotes((current) => [newNote, ...current]);
+    setPageByNote((current) => ({ ...current, [newNoteId]: 0 }));
+    setChatByNote((current) => ({ ...current, [newNoteId]: INITIAL_MESSAGES }));
+    setSelectedNoteId(newNoteId);
+    setScreen("note");
+  };
+
+  const handleCreateFolder = () => {
+    const name = window.prompt("새 폴더 이름을 입력하세요.");
+    if (!name?.trim()) {
+      return;
+    }
+
+    const newFolder = {
+      id: `folder-${Date.now()}`,
+      name: name.trim(),
+      deleted: false,
+    };
+
+    setFolders((current) => [newFolder, ...current]);
+    setSelectedNav("folders");
+    setSelectedFolderId(newFolder.id);
+  };
+
+  const requestDeleteNote = (noteId) => {
+    const note = notes.find((item) => item.id === noteId);
+    if (!note) {
+      return;
+    }
+
+    setConfirmDialog({
+      kind: "note-delete",
+      id: noteId,
+      title: "노트를 휴지통으로 이동할까요?",
+      message: `"${note.name}" 노트를 휴지통으로 이동합니다.`,
+    });
+  };
+
+  const requestDeleteFolder = (folderId) => {
+    const folder = folders.find((item) => item.id === folderId);
+    if (!folder) {
+      return;
+    }
+
+    setConfirmDialog({
+      kind: "folder-delete",
+      id: folderId,
+      title: "폴더와 폴더 내의 모든 노트들을 휴지통으로 이동할까요?",
+      message: `"${folder.name}" 폴더와 내부 노트들이 함께 휴지통으로 이동됩니다.`,
+    });
+  };
+
+  const handleConfirmAction = () => {
+    if (!confirmDialog) {
+      return;
+    }
+
+    if (confirmDialog.kind === "note-delete") {
+      setNotes((current) =>
+        current.map((note) =>
+          note.id === confirmDialog.id
+            ? { ...note, deleted: true, favorite: false, updatedAt: "방금 휴지통으로 이동됨" }
+            : note,
+        ),
+      );
+    }
+
+    if (confirmDialog.kind === "folder-delete") {
+      setFolders((current) =>
+        current.map((folder) =>
+          folder.id === confirmDialog.id ? { ...folder, deleted: true } : folder,
+        ),
+      );
+      setNotes((current) =>
+        current.map((note) =>
+          note.folderId === confirmDialog.id
+            ? { ...note, deleted: true, favorite: false, updatedAt: "방금 휴지통으로 이동됨" }
+            : note,
+        ),
+      );
+      if (selectedFolderId === confirmDialog.id) {
+        setSelectedFolderId(null);
+      }
+    }
+
+    setConfirmDialog(null);
+    setContextMenu(null);
+  };
+
+  const handleToggleFavorite = (noteId) => {
+    setNotes((current) =>
+      current.map((note) =>
+        note.id === noteId
+          ? {
+              ...note,
+              favorite: !note.favorite,
+              updatedAt: note.favorite ? "즐겨찾기 해제됨" : "즐겨찾기에 추가됨",
+            }
+          : note,
+      ),
+    );
+    setContextMenu(null);
+  };
+
+  const handleShareNote = async (noteId) => {
+    const note = notes.find((item) => item.id === noteId);
+    if (!note) {
+      return;
+    }
+
+    const shareText = `${note.name} (${note.code})`;
+    try {
+      await navigator.clipboard.writeText(shareText);
+      window.alert("노트 제목을 클립보드에 복사했습니다.");
+    } catch {
+      window.alert(`공유용 텍스트: ${shareText}`);
+    }
+    setContextMenu(null);
+  };
+
+  const handleRenameFolder = (folderId) => {
+    const folder = folders.find((item) => item.id === folderId);
+    if (!folder) {
+      return;
+    }
+
+    const nextName = window.prompt("폴더 이름을 수정하세요.", folder.name);
+    if (!nextName?.trim()) {
+      return;
+    }
+
+    setFolders((current) =>
+      current.map((item) =>
+        item.id === folderId ? { ...item, name: nextName.trim() } : item,
+      ),
+    );
+    setContextMenu(null);
   };
 
   const pushHistory = (entry) => {
@@ -1177,10 +1795,56 @@ export default function App() {
     });
   };
 
-  const handleTypedNoteChange = (event, pageIndex = currentPageIndex) => {
-    const value = event.target.value;
+  const handleTextLayerPointerDown = (pageIndex, event) => {
+    if (annotationMode !== "text" || event.button !== 0) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    const textarea = typingTextareaRefs.current[pageIndex];
+    if (!textarea) {
+      return;
+    }
+
+    const rect = textarea.getBoundingClientRect();
+    const { lineHeight, paddingTop, maxLines } = getTextareaMetrics(textarea);
+    const rawLineIndex = Math.floor((event.clientY - rect.top - paddingTop) / lineHeight);
+    const snappedLineIndex = clamp(rawLineIndex, 0, maxLines - 1);
     const targetPageKey = `${selectedNote.id}:${pageIndex}`;
+    const currentValue = notesByPageRef.current[targetPageKey] ?? "";
+    const nextValue = ensureLineExists(currentValue, snappedLineIndex);
+
+    if (nextValue !== currentValue) {
+      notesByPageRef.current = {
+        ...notesByPageRef.current,
+        [targetPageKey]: nextValue,
+      };
+      setNotesByPage(notesByPageRef.current);
+    }
+
+    setPageByNote((current) => ({
+      ...current,
+      [selectedNote.id]: pageIndex,
+    }));
+
+    window.requestAnimationFrame(() => {
+      const nextTextarea = typingTextareaRefs.current[pageIndex];
+      if (!nextTextarea) {
+        return;
+      }
+
+      const lineStartIndex = getLineStartIndex(nextValue, snappedLineIndex);
+      nextTextarea.focus();
+      nextTextarea.setSelectionRange(lineStartIndex, lineStartIndex);
+    });
+  };
+
+  const handleTypedNoteChange = (event, pageIndex = currentPageIndex) => {
+    const targetPageKey = `${selectedNote.id}:${pageIndex}`;
+    const value = event.target.value;
     const previousValue = notesByPageRef.current[targetPageKey] ?? "";
+
     if (previousValue === value) {
       return;
     }
@@ -1199,26 +1863,111 @@ export default function App() {
   };
 
   const handleTypingKeyDown = (event, pageIndex) => {
-    if (event.key !== "Tab") {
+    const target = event.target;
+    const targetPageKey = `${selectedNote.id}:${pageIndex}`;
+    const selectionStart = target.selectionStart ?? 0;
+    const selectionEnd = target.selectionEnd ?? 0;
+    const isSelectionCollapsed = selectionStart === selectionEnd;
+    const isVisuallyBlankPage = target.value.trim().length === 0;
+    const currentLineIndex = getLineIndexFromCaret(target.value, selectionStart);
+    const currentLineStart = getLineStartIndex(target.value, currentLineIndex);
+    const isAtLineStart = isSelectionCollapsed && selectionStart === currentLineStart;
+
+    if (event.key === "Tab") {
+      event.preventDefault();
+      const value = target.value;
+      const start = selectionStart;
+      const end = selectionEnd;
+      const nextValue = `${value.slice(0, start)}\t${value.slice(end)}`;
+
+      notesByPageRef.current = {
+        ...notesByPageRef.current,
+        [targetPageKey]: nextValue,
+      };
+      setNotesByPage(notesByPageRef.current);
+      pushHistory({
+        kind: "text",
+        pageKey: targetPageKey,
+        before: value,
+        after: nextValue,
+      });
+
+      window.requestAnimationFrame(() => {
+        target.selectionStart = start + 1;
+        target.selectionEnd = start + 1;
+      });
+      return;
+    }
+
+    if (
+      event.key === "Backspace" &&
+      isSelectionCollapsed &&
+      isVisuallyBlankPage
+    ) {
+      if (!isAtLineStart) {
+        return;
+      }
+
+      if (currentLineIndex > 0) {
+        event.preventDefault();
+        const previousLineStart = getLineStartIndex(target.value, currentLineIndex - 1);
+        window.requestAnimationFrame(() => {
+          target.focus();
+          target.setSelectionRange(previousLineStart, previousLineStart);
+        });
+        return;
+      }
+
+      if (pageIndex <= 0) {
+        return;
+      }
+
+      event.preventDefault();
+      notesByPageRef.current = {
+        ...notesByPageRef.current,
+        [targetPageKey]: "",
+      };
+      setNotesByPage(notesByPageRef.current);
+      const previousPageIndex = pageIndex - 1;
+      pendingTextFocusRef.current = {
+        pageIndex: previousPageIndex,
+        caret: "last-line",
+        clearBlank: false,
+      };
+      setPageByNote((current) => ({
+        ...current,
+        [selectedNote.id]: previousPageIndex,
+      }));
+      scrollToPage(previousPageIndex);
+      return;
+    }
+
+    if (event.key !== "Enter" || event.shiftKey) {
+      return;
+    }
+
+    const nextPageIndex = pageIndex + 1;
+    if (nextPageIndex >= renderedPageCount) {
+      return;
+    }
+
+    const { maxLines } = getTextareaMetrics(target);
+
+    if (!isSelectionCollapsed || currentLineIndex < maxLines - 1) {
       return;
     }
 
     event.preventDefault();
-    const target = event.target;
-    const value = target.value;
-    const start = target.selectionStart;
-    const end = target.selectionEnd;
-    const nextValue = `${value.slice(0, start)}\t${value.slice(end)}`;
-
-    setNotesByPage((current) => ({
+    pendingTextFocusRef.current = {
+      pageIndex: nextPageIndex,
+      caret: 0,
+      clearBlank: true,
+    };
+    setPageByNote((current) => ({
       ...current,
-      [`${selectedNote.id}:${pageIndex}`]: nextValue,
+      [selectedNote.id]: nextPageIndex,
     }));
-
-    window.requestAnimationFrame(() => {
-      target.selectionStart = start + 1;
-      target.selectionEnd = start + 1;
-    });
+    scrollToPage(nextPageIndex);
   };
 
   const handleClearAnnotations = () => {
@@ -1348,14 +2097,16 @@ export default function App() {
 
   const noteDetailGridColumns =
     screen === "note"
-      ? [
-          rightOpen ? `${rightWidth}px` : `${COLLAPSED_RAIL}px`,
-          rightOpen ? `${HANDLE_WIDTH}px` : "0px",
-          "minmax(0, 1fr)",
-        ].join(" ")
+      ? "minmax(0, 1fr)"
       : leftOpen
         ? "284px minmax(0, 1fr)"
         : `${COLLAPSED_RAIL}px minmax(0, 1fr)`;
+
+  const noteWorkspaceColumns = [
+    rightOpen ? `${rightWidth}px` : `${COLLAPSED_RAIL}px`,
+    "0px",
+    "minmax(0, 1fr)",
+  ].join(" ");
 
   return (
     <main className={`app-shell ${screen === "note" ? "detail-mode" : "home-mode"}`}>
@@ -1390,7 +2141,7 @@ export default function App() {
 
                 {selectedNav === "folders" ? (
                   <div className="folder-nav-list">
-                    {FOLDERS.map((folder) => {
+                    {folders.filter((folder) => !folder.deleted).map((folder) => {
                       const count = notesInFolders.filter((note) => note.folderId === folder.id).length;
                       return (
                         <button
@@ -1418,83 +2169,7 @@ export default function App() {
               </button>
             )}
           </aside>
-        ) : (
-          <>
-            <aside className={`sidebar-shell note-ai-shell ${rightOpen ? "" : "is-collapsed"}`}>
-              {rightOpen ? (
-                <div className="panel chat-panel note-ai-panel">
-                  <div className="panel-header panel-header-row">
-                    <div>
-                      <p className="eyebrow">AI Assistant</p>
-                      <h2>페이지 기반 질의응답</h2>
-                    </div>
-                    <button
-                      type="button"
-                      className="sidebar-toggle"
-                      onClick={() => setRightOpen(false)}
-                      aria-label="AI 어시스턴트 접기"
-                    >
-                      ◀
-                    </button>
-                  </div>
-
-                  <div className="chat-meta">
-                    <span>{selectedNote.code}</span>
-                    <span>{currentPage.title}</span>
-                  </div>
-
-                  <div className="chat-thread">
-                    {messages.map((message) => (
-                      <div
-                        key={message.id}
-                        className={`chat-bubble ${message.role === "assistant" ? "assistant" : "user"}`}
-                      >
-                        <span className="bubble-role">{message.role === "assistant" ? "AI" : "나"}</span>
-                        <p>{message.text}</p>
-                      </div>
-                    ))}
-
-                    {isThinking ? (
-                      <div className="chat-bubble assistant">
-                        <span className="bubble-role">AI</span>
-                        <p>현재 페이지와 메모, 이미지 문맥을 바탕으로 답변을 정리하는 중입니다...</p>
-                      </div>
-                    ) : null}
-                  </div>
-
-                  <div className="chat-composer">
-                    <textarea
-                      value={question}
-                      onChange={(event) => setQuestion(event.target.value)}
-                      onKeyDown={handleKeyDown}
-                      placeholder="현재 페이지 내용에 대해 질문해보세요..."
-                    />
-                    <button type="button" onClick={handleAsk}>
-                      질문하기
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <button
-                  type="button"
-                  className="collapsed-toggle"
-                  onClick={() => setRightOpen(true)}
-                  aria-label="AI 어시스턴트 열기"
-                >
-                  AI
-                </button>
-              )}
-            </aside>
-
-            <div
-              className={`resize-handle ${rightOpen ? "" : "is-hidden"}`}
-              onMouseDown={() => rightOpen && setDragging("note-ai")}
-              role="separator"
-              aria-orientation="vertical"
-              aria-label="AI 어시스턴트 너비 조절"
-            />
-          </>
-        )}
+        ) : null}
 
         {screen === "home" ? (
           <section className="panel home-panel samsung-home-panel">
@@ -1503,10 +2178,8 @@ export default function App() {
 
               <div className="home-toolbar">
                 <div className="header-actions samsung-actions">
-                  <button type="button">노트 작성</button>
-                  <button type="button">PDF 가져오기</button>
-                  <button type="button">편집</button>
-                  <button type="button">보기 방식</button>
+                  <button type="button" onClick={handleCreateNote}>노트 작성</button>
+                  <button type="button" onClick={handleCreateFolder}>폴더 생성</button>
                 </div>
                 <div className="search-shell">
                   <input
@@ -1523,7 +2196,7 @@ export default function App() {
             {selectedNav === "folders" ? (
               <>
                 <div className="folder-strip">
-                  {FOLDERS.map((folder) => {
+                  {folders.filter((folder) => !folder.deleted).map((folder) => {
                     const count = notesInFolders.filter((note) => note.folderId === folder.id).length;
                     return (
                       <button
@@ -1531,6 +2204,7 @@ export default function App() {
                         type="button"
                         className={`folder-card samsung-folder-card ${selectedFolderId === folder.id ? "is-active" : ""}`}
                         onClick={() => handleFolderSelect(folder.id)}
+                        onContextMenu={(event) => handleFolderContextMenu(event, folder.id)}
                       >
                         <div className="folder-tab" />
                         <div className="folder-card-meta">{count}</div>
@@ -1553,6 +2227,7 @@ export default function App() {
                       type="button"
                       className={`note-card samsung-note-card ${note.deleted ? "is-trash" : ""}`}
                       onClick={() => openNote(note.id)}
+                      onContextMenu={(event) => handleNoteContextMenu(event, note.id)}
                     >
                       <div className={`note-preview ${getPreviewVariant(note)} ${note.accent}`}>
                         <span className="preview-title">{formatPreviewTitle(note)}</span>
@@ -1585,6 +2260,7 @@ export default function App() {
                       type="button"
                       className={`note-card samsung-note-card ${note.deleted ? "is-trash" : ""}`}
                       onClick={() => openNote(note.id)}
+                      onContextMenu={(event) => handleNoteContextMenu(event, note.id)}
                     >
                       <div className={`note-preview ${getPreviewVariant(note)} ${note.accent}`}>
                         <span className="preview-title">{formatPreviewTitle(note)}</span>
@@ -1606,219 +2282,376 @@ export default function App() {
           </section>
         ) : (
           <>
-            <section className="panel workspace">
-              <div className="workspace-topbar">
-                <div className="workspace-title-row">
-                  <button type="button" className="back-link" onClick={() => setScreen("home")}>
-                    ← 메인으로
-                  </button>
-                  <h2>{selectedNote.name}</h2>
+            <section className="panel workspace note-detail-panel">
+              <div className="note-study-shell">
+                <div className="note-workspace-grid" style={{ gridTemplateColumns: noteWorkspaceColumns }}>
+                <div className="note-sidebar-topbar">
+                  {rightOpen ? (
+                    <>
+                      <div>
+                        <p className="eyebrow">AI Assistant</p>
+                        <strong>페이지 기반 질의응답</strong>
+                      </div>
+                      <button
+                        type="button"
+                        className="sidebar-toggle"
+                        onClick={() => setRightOpen(false)}
+                        aria-label="AI 어시스턴트 접기"
+                      >
+                        ◀
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      className="collapsed-toggle collapsed-toggle--inline"
+                      onClick={() => setRightOpen(true)}
+                      aria-label="AI 어시스턴트 열기"
+                    >
+                      AI
+                    </button>
+                  )}
                 </div>
-              </div>
 
-              <div className="pdf-viewer annotation-workspace">
-                <div className="pdf-toolbar annotation-toolbar">
-                  <div className="annotation-actions">
-                    <button
-                      type="button"
-                      className={annotationMode === "draw" ? "is-active" : ""}
-                      onClick={() => setAnnotationMode("draw")}
-                    >
-                      손글씨
+                <div
+                  className={`resize-handle note-inline-handle ${rightOpen ? "" : "is-hidden"}`}
+                  onMouseDown={() => rightOpen && setDragging("note-ai")}
+                  role="separator"
+                  aria-orientation="vertical"
+                  aria-label="AI 어시스턴트 너비 조절"
+                />
+
+                <div className="workspace-topbar note-toolbar-bar">
+                  <div className="workspace-title-row">
+                    <button type="button" className="back-link" onClick={() => setScreen("home")}>
+                      ← 메인으로
                     </button>
-                    <button
-                      type="button"
-                      className={annotationMode === "text" ? "is-active" : ""}
-                      onClick={() => setAnnotationMode("text")}
-                    >
-                      타이핑
-                    </button>
-                    <button
-                      type="button"
-                      className={annotationMode === "erase" ? "is-active" : ""}
-                      onClick={() => setAnnotationMode("erase")}
-                    >
-                      지우개
-                    </button>
-                    <button
-                      type="button"
-                      className={annotationMode === "capture" ? "is-active" : ""}
-                      onClick={() => setAnnotationMode("capture")}
-                    >
-                      영역 캡처
-                    </button>
-                    <button type="button" onClick={handleClearAnnotations}>
-                      현재 페이지 지우기
-                    </button>
-                    <button type="button" onClick={() => galleryInputRef.current?.click()}>
-                      이미지 업로드
-                    </button>
-                    <button type="button" onClick={() => cameraInputRef.current?.click()}>
-                      카메라 열기
-                    </button>
-                    <button type="button" onClick={() => pdfInputRef.current?.click()}>
-                      PDF 업로드
-                    </button>
-                    <input
-                      ref={galleryInputRef}
-                      className="hidden-input"
-                      type="file"
-                      accept="image/*"
-                      onChange={handleImageUpload}
-                    />
-                    <input
-                      ref={cameraInputRef}
-                      className="hidden-input"
-                      type="file"
-                      accept="image/*"
-                      capture="environment"
-                      onChange={handleImageUpload}
-                    />
-                    <input
-                      ref={pdfInputRef}
-                      className="hidden-input"
-                      type="file"
-                      accept="application/pdf"
-                      onChange={handlePdfUpload}
-                    />
+                    <h2>{selectedNote.name}</h2>
                   </div>
+                  <div className="note-top-actions annotation-actions annotation-actions--compact">
+                  <button
+                    type="button"
+                    title="손글씨"
+                    aria-label="손글씨"
+                    className={annotationMode === "draw" ? "is-active" : ""}
+                    onClick={() => setAnnotationMode("draw")}
+                  >
+                    ✎
+                  </button>
+                  <button
+                    type="button"
+                    title="타이핑"
+                    aria-label="타이핑"
+                    className={annotationMode === "text" ? "is-active" : ""}
+                    onClick={activateTextMode}
+                  >
+                    T
+                  </button>
+                  <button
+                    type="button"
+                    title="지우개"
+                    aria-label="지우개"
+                    className={annotationMode === "erase" ? "is-active" : ""}
+                    onClick={() => setAnnotationMode("erase")}
+                  >
+                    ⌫
+                  </button>
+                  <button
+                    type="button"
+                    title="영역 캡처"
+                    aria-label="영역 캡처"
+                    className={annotationMode === "capture" ? "is-active" : ""}
+                    onClick={() => setAnnotationMode("capture")}
+                  >
+                    ▣
+                  </button>
+                  <button type="button" title="현재 페이지 지우기" aria-label="현재 페이지 지우기" onClick={handleClearAnnotations}>
+                    ⟲
+                  </button>
+                  <button type="button" title="이미지 업로드" aria-label="이미지 업로드" onClick={() => galleryInputRef.current?.click()}>
+                    ＋I
+                  </button>
+                  <button type="button" title="카메라 열기" aria-label="카메라 열기" onClick={() => cameraInputRef.current?.click()}>
+                    Cam
+                  </button>
+                  <button type="button" title="PDF 업로드" aria-label="PDF 업로드" onClick={() => pdfInputRef.current?.click()}>
+                    PDF
+                  </button>
+                  <input
+                    ref={galleryInputRef}
+                    className="hidden-input"
+                    type="file"
+                    accept="image/*"
+                    onChange={handleImageUpload}
+                  />
+                  <input
+                    ref={cameraInputRef}
+                    className="hidden-input"
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    onChange={handleImageUpload}
+                  />
+                  <input
+                    ref={pdfInputRef}
+                    className="hidden-input"
+                    type="file"
+                    accept="application/pdf"
+                    onChange={handlePdfUpload}
+                  />
+                </div>
                 </div>
 
-                {currentPdf ? (
-                  <div className="annotation-board">
-                    <div className="annotation-stage" ref={annotationStageRef}>
-                      <div className="annotation-scroll" ref={annotationScrollRef}>
-                        {Array.from({ length: renderedPageCount }, (_, pageIndex) => {
-                          const pageKeyForRender = `${selectedNote.id}:${pageIndex}`;
-                          const pageStrokes = strokesByPage[pageKeyForRender] ?? [];
-                          const pageTypedNote = notesByPage[pageKeyForRender] ?? "";
-                          const pageSize = pdfPageSizes[pageIndex] ?? { width: 760, height: 980 };
+                <div className={`note-embedded-ai ${rightOpen ? "" : "is-collapsed"}`}>
+                  {rightOpen ? (
+                    <div className="chat-panel note-ai-panel note-ai-panel--embedded">
+                      <div className="chat-meta">
+                        <span>{selectedNote.code}</span>
+                        <span>{currentPage.title}</span>
+                      </div>
 
-                          return (
-                            <div
-                              key={pageKeyForRender}
-                              className="paper-stage"
-                              ref={(node) => {
-                                if (node) {
-                                  pageSurfaceRefs.current[pageIndex] = node;
-                                }
-                              }}
-                              style={{
-                                width: `${pageSize.width * pageZoom}px`,
-                                minHeight: `${pageSize.height * pageZoom}px`,
-                              }}
-                            >
-                              <div
-                                className="paper-zoom-surface"
-                                style={{
-                                  width: `${pageSize.width}px`,
-                                  height: `${pageSize.height}px`,
-                                  transform: `scale(${pageZoom})`,
-                                }}
-                              >
-                                <canvas
-                                  ref={(node) => {
-                                    if (node) {
-                                      pdfCanvasRefs.current[pageIndex] = node;
-                                    }
-                                  }}
-                                  className="pdf-canvas"
-                                />
-                                {pdfRenderError && pageIndex === 0 ? (
-                                  <div className="pdf-render-error">{pdfRenderError}</div>
-                                ) : null}
-                                <svg
-                                  className={`annotation-layer ${annotationMode === "text" ? "is-disabled" : ""}`}
-                                  viewBox={`0 0 ${pageSize.width} ${pageSize.height}`}
-                                  preserveAspectRatio="none"
-                                  onPointerDown={(event) => handleAnnotationPointerDown(pageIndex, event)}
-                                  onPointerMove={(event) => handleAnnotationPointerMove(pageIndex, event)}
-                                  onPointerUp={handleAnnotationPointerUp}
-                                  onPointerLeave={handleAnnotationPointerUp}
-                                  onPointerCancel={handleAnnotationPointerUp}
-                                  onLostPointerCapture={handleAnnotationPointerUp}
-                                >
-                                  {pageStrokes.map((stroke) => (
-                                    <path
-                                      key={stroke.id}
-                                      d={buildStrokePath(stroke.points, pageSize.width, pageSize.height)}
-                                      fill="none"
-                                      stroke="#1d4ed8"
-                                      strokeWidth="4"
-                                      strokeLinecap="round"
-                                      strokeLinejoin="round"
-                                    />
-                                  ))}
-                                  {captureSelection && captureSelection.pageIndex === pageIndex ? (
-                                    <path
-                                      d={buildSelectionPath(
-                                        captureSelection.points,
-                                        pageSize.width,
-                                        pageSize.height,
-                                      )}
-                                      fill="rgba(59, 130, 246, 0.12)"
-                                      stroke="#2563eb"
-                                      strokeWidth="2.5"
-                                      strokeDasharray="10 8"
-                                      strokeLinecap="round"
-                                      strokeLinejoin="round"
-                                    />
-                                  ) : null}
-                                </svg>
+                      <div className="chat-thread">
+                        {messages.map((message) => (
+                          <div
+                            key={message.id}
+                            className={`chat-bubble ${message.role === "assistant" ? "assistant" : "user"}`}
+                          >
+                            <span className="bubble-role">{message.role === "assistant" ? "AI" : "나"}</span>
+                            <p>{message.text}</p>
+                          </div>
+                        ))}
 
-                                <div className="annotation-text-layer">
-                                  <textarea
-                                    ref={pageIndex === currentPageIndex ? typingTextareaRef : null}
-                                    className={`annotation-typing-pad ${
-                                      annotationMode === "text" && pageIndex === currentPageIndex ? "is-active" : ""
-                                    }`}
-                                    value={pageTypedNote}
-                                    onChange={(event) => handleTypedNoteChange(event, pageIndex)}
-                                    onKeyDown={(event) => handleTypingKeyDown(event, pageIndex)}
-                                    placeholder=""
-                                    aria-label={`${pageIndex + 1}페이지 타이핑 메모`}
-                                  />
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        })}
+                        {isThinking ? (
+                          <div className="chat-bubble assistant">
+                            <span className="bubble-role">AI</span>
+                            <p>현재 페이지와 메모, 이미지 문맥을 바탕으로 답변을 정리하는 중입니다...</p>
+                          </div>
+                        ) : null}
+                      </div>
+
+                      <div className="chat-composer">
+                        <textarea
+                          value={question}
+                          onChange={(event) => setQuestion(event.target.value)}
+                          onKeyDown={handleKeyDown}
+                          placeholder="현재 페이지 내용에 대해 질문해보세요..."
+                        />
+                        <button type="button" onClick={handleAsk}>
+                          질문하기
+                        </button>
                       </div>
                     </div>
+                  ) : (
+                    <div className="note-ai-collapsed-marker" />
+                  )}
+                </div>
 
-                    {currentUploads.length > 0 ? (
-                      <div className="paper-upload-strip">
-                        {currentUploads.map((upload) => (
-                          <figure key={upload.id} className="paper-upload-card">
-                            <img src={upload.previewUrl} alt={upload.name} />
-                            <figcaption>{upload.name}</figcaption>
-                          </figure>
-                        ))}
-                      </div>
-                    ) : null}
+                <div className="note-content">
+                  <div className="pdf-viewer annotation-workspace">
+                    {currentPdf ? (
+                      <div className="annotation-board">
+                        <div className="annotation-stage" ref={annotationStageRef}>
+                          <div className="annotation-scroll" ref={annotationScrollRef}>
+                            {Array.from({ length: renderedPageCount }, (_, pageIndex) => {
+                              const pageKeyForRender = `${selectedNote.id}:${pageIndex}`;
+                              const pageStrokes = strokesByPage[pageKeyForRender] ?? [];
+                              const pageTypedNote = notesByPage[pageKeyForRender] ?? "";
+                              const pageSize = pdfPageSizes[pageIndex] ?? { width: 760, height: 980 };
 
-                    {currentCaptures.length > 0 ? (
-                      <div className="capture-strip">
-                        {currentCaptures.map((capture) => (
-                          <figure key={capture.id} className="capture-card">
-                            <img src={capture.previewUrl} alt={`캡처 ${capture.pageIndex + 1}`} />
-                            <figcaption>{capture.pageIndex + 1}페이지 캡처</figcaption>
-                          </figure>
-                        ))}
+                              return (
+                                <div
+                                  key={pageKeyForRender}
+                                  className="paper-stage"
+                                  ref={(node) => {
+                                    if (node) {
+                                      pageSurfaceRefs.current[pageIndex] = node;
+                                    }
+                                  }}
+                                  style={{
+                                    width: `${pageSize.width * pageZoom}px`,
+                                    minHeight: `${pageSize.height * pageZoom}px`,
+                                  }}
+                                >
+                                  <div
+                                    className="paper-zoom-surface"
+                                    style={{
+                                      width: `${pageSize.width}px`,
+                                      height: `${pageSize.height}px`,
+                                      transform: `scale(${pageZoom})`,
+                                    }}
+                                  >
+                                    <canvas
+                                      ref={(node) => {
+                                        if (node) {
+                                          pdfCanvasRefs.current[pageIndex] = node;
+                                        }
+                                      }}
+                                      className="pdf-canvas"
+                                    />
+                                    {pdfRenderError && pageIndex === 0 ? (
+                                      <div className="pdf-render-error">{pdfRenderError}</div>
+                                    ) : null}
+                                    <svg
+                                      className={`annotation-layer ${annotationMode === "text" ? "is-disabled" : ""}`}
+                                      viewBox={`0 0 ${pageSize.width} ${pageSize.height}`}
+                                      preserveAspectRatio="none"
+                                      onPointerDown={(event) => handleAnnotationPointerDown(pageIndex, event)}
+                                      onPointerMove={(event) => handleAnnotationPointerMove(pageIndex, event)}
+                                      onPointerUp={handleAnnotationPointerUp}
+                                      onPointerLeave={handleAnnotationPointerUp}
+                                      onPointerCancel={handleAnnotationPointerUp}
+                                      onLostPointerCapture={handleAnnotationPointerUp}
+                                    >
+                                      {pageStrokes.map((stroke) => (
+                                        <path
+                                          key={stroke.id}
+                                          d={buildStrokePath(stroke.points, pageSize.width, pageSize.height)}
+                                          fill="none"
+                                          stroke="#1d4ed8"
+                                          strokeWidth="4"
+                                          strokeLinecap="round"
+                                          strokeLinejoin="round"
+                                        />
+                                      ))}
+                                      {captureSelection && captureSelection.pageIndex === pageIndex ? (
+                                        <path
+                                          d={buildSelectionPath(
+                                            captureSelection.points,
+                                            pageSize.width,
+                                            pageSize.height,
+                                          )}
+                                          fill="rgba(59, 130, 246, 0.12)"
+                                          stroke="#2563eb"
+                                          strokeWidth="2.5"
+                                          strokeDasharray="10 8"
+                                          strokeLinecap="round"
+                                          strokeLinejoin="round"
+                                        />
+                                      ) : null}
+                                    </svg>
+
+                                    <div className={`annotation-text-layer ${annotationMode === "text" ? "is-active" : ""}`}>
+                                      <textarea
+                                        ref={(node) => {
+                                          if (node) {
+                                            typingTextareaRefs.current[pageIndex] = node;
+                                          } else {
+                                            delete typingTextareaRefs.current[pageIndex];
+                                          }
+                                        }}
+                                        className={`annotation-typing-pad ${
+                                          annotationMode === "text" ? "is-active" : ""
+                                        }`}
+                                        value={pageTypedNote}
+                                        onChange={(event) => handleTypedNoteChange(event, pageIndex)}
+                                        onKeyDown={(event) => handleTypingKeyDown(event, pageIndex)}
+                                        onPointerDown={(event) => handleTextLayerPointerDown(pageIndex, event)}
+                                        placeholder=""
+                                        aria-label={`${pageIndex + 1}페이지 타이핑 메모`}
+                                      />
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+
+                        {currentUploads.length > 0 ? (
+                          <div className="paper-upload-strip">
+                            {currentUploads.map((upload) => (
+                              <figure key={upload.id} className="paper-upload-card">
+                                <img src={upload.previewUrl} alt={upload.name} />
+                                <figcaption>{upload.name}</figcaption>
+                              </figure>
+                            ))}
+                          </div>
+                        ) : null}
+
+                        {currentCaptures.length > 0 ? (
+                          <div className="capture-strip">
+                            {currentCaptures.map((capture) => (
+                              <figure key={capture.id} className="capture-card">
+                                <img src={capture.previewUrl} alt={`캡처 ${capture.pageIndex + 1}`} />
+                                <figcaption>{capture.pageIndex + 1}페이지 캡처</figcaption>
+                              </figure>
+                            ))}
+                          </div>
+                        ) : null}
                       </div>
-                    ) : null}
+                    ) : (
+                      <div className="pdf-empty">
+                        <strong>아직 PDF가 연결되지 않았습니다.</strong>
+                        <p>PDF를 연결하면 그 위에 바로 필기하고 타이핑 메모를 남길 수 있습니다.</p>
+                      </div>
+                    )}
                   </div>
-                ) : (
-                  <div className="pdf-empty">
-                    <strong>아직 PDF가 연결되지 않았습니다.</strong>
-                    <p>PDF를 연결하면 그 위에 바로 필기하고 타이핑 메모를 남길 수 있습니다.</p>
-                  </div>
-                )}
+                </div>
+                </div>
               </div>
             </section>
           </>
         )}
       </div>
+
+      {screen === "home" && selectedNav === "trash" && deletedFolders.length > 0 ? (
+        <div className="trash-folder-dock">
+          {deletedFolders.map((folder) => (
+            <div key={folder.id} className="trash-folder-chip">
+              {folder.name}
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      {contextMenu ? (
+        <div
+          className="context-menu"
+          style={{ top: contextMenu.y, left: contextMenu.x }}
+          onMouseDown={(event) => event.stopPropagation()}
+          onClick={(event) => event.stopPropagation()}
+        >
+          {contextMenu.type === "note" ? (
+            <>
+              <button type="button" onClick={() => requestDeleteNote(contextMenu.id)}>
+                삭제
+              </button>
+              <button type="button" onClick={() => handleToggleFavorite(contextMenu.id)}>
+                즐겨찾기 토글
+              </button>
+              <button type="button" onClick={() => handleShareNote(contextMenu.id)}>
+                공유
+              </button>
+            </>
+          ) : (
+            <>
+              <button type="button" onClick={() => handleRenameFolder(contextMenu.id)}>
+                이름변경
+              </button>
+              <button type="button" onClick={() => requestDeleteFolder(contextMenu.id)}>
+                삭제
+              </button>
+            </>
+          )}
+        </div>
+      ) : null}
+
+      {confirmDialog ? (
+        <div className="dialog-backdrop">
+          <div className="confirm-dialog" onMouseDown={(event) => event.stopPropagation()}>
+            <strong>{confirmDialog.title}</strong>
+            <p>{confirmDialog.message}</p>
+            <div className="dialog-actions">
+              <button type="button" onClick={() => setConfirmDialog(null)}>
+                취소
+              </button>
+              <button type="button" className="danger" onClick={handleConfirmAction}>
+                휴지통으로 이동
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }
