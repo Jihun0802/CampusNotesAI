@@ -126,14 +126,9 @@ button {
   gap: 0;
 }
 
-.note-sidebar-topbar {
-  grid-column: 1;
-  grid-row: 1;
-}
-
 .note-inline-handle {
   grid-column: 2;
-  grid-row: 1 / span 2;
+  grid-row: 2;
   width: 0;
   background: transparent;
   border-radius: 0;
@@ -141,9 +136,9 @@ button {
 }
 
 .note-toolbar-bar {
-  grid-column: 3;
+  grid-column: 1 / 4;
   grid-row: 1;
-  margin-left: -2px;
+  margin-left: 0;
 }
 
 .note-embedded-ai {
@@ -160,8 +155,7 @@ button {
 .panel-header h2,
 .home-header h2,
 .workspace-topbar h2,
-.notes-header h3,
-.pdf-sheet h3 {
+.notes-header h3 {
   margin: 0;
 }
 
@@ -195,6 +189,8 @@ button {
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
+  justify-self: start;
+  min-width: 0;
 }
 
 .workspace-title-row h2 {
@@ -203,48 +199,39 @@ button {
 
 .workspace-topbar {
   align-items: center;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  column-gap: 12px;
+}
+
+.note-toolbar-bar h2 {
+  margin: 0;
+  color: #ffffff;
+  font-size: 1.02rem;
+  line-height: 1.15;
 }
 
 .note-top-actions {
-  justify-content: flex-end;
-  flex: 1;
+  justify-content: center;
   min-width: 0;
+  justify-self: center;
 }
 
-.note-toolbar-bar,
-.note-sidebar-topbar {
-  min-height: 72px;
-  padding: 14px 18px;
-  border-bottom: 1px solid rgba(15, 23, 42, 0.08);
-  background: rgba(255, 255, 255, 0.42);
+.note-toolbar-bar {
+  min-height: 50px;
+  padding: 8px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  background: linear-gradient(180deg, #0f4fa0 0%, #0b4388 100%);
   backdrop-filter: blur(8px);
 }
 
 .note-toolbar-bar {
   border-top-right-radius: 18px;
-}
-
-.note-sidebar-topbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
   border-top-left-radius: 18px;
-  border-right: 1px solid rgba(15, 23, 42, 0.08);
 }
 
-.note-sidebar-topbar strong {
-  display: block;
-  color: #111827;
-  font-size: 0.95rem;
-}
-
-.collapsed-toggle--inline {
-  width: 100%;
-  min-height: 44px;
-  writing-mode: initial;
-  text-orientation: initial;
-  border-radius: 12px;
+.note-toolbar-spacer {
+  min-width: 0;
 }
 
 .note-embedded-ai,
@@ -255,17 +242,6 @@ button {
 .note-embedded-ai {
   border-right: 1px solid rgba(15, 23, 42, 0.08);
   background: rgba(255, 255, 255, 0.28);
-}
-
-.note-embedded-ai.is-collapsed {
-  display: grid;
-  place-items: start center;
-  padding-top: 16px;
-}
-
-.note-ai-collapsed-marker {
-  width: 100%;
-  height: 100%;
 }
 
 .note-ai-panel--embedded {
@@ -290,8 +266,7 @@ button {
 
 .sidebar-toggle,
 .collapsed-toggle,
-.page-controls button,
-.upload-actions button,
+.note-ai-toggle,
 .chat-composer button,
 .back-link,
 .menu-button,
@@ -303,8 +278,7 @@ button {
 
 .sidebar-toggle,
 .collapsed-toggle,
-.page-controls button,
-.upload-actions button,
+.note-ai-toggle,
 .chat-composer button {
   background: #1b2430;
   color: #ffffff;
@@ -327,6 +301,44 @@ button {
   text-orientation: mixed;
 }
 
+.note-ai-toggle {
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.88);
+  background: #ffffff;
+  color: #0f4fa0;
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.note-ai-toggle.is-active {
+  background: #0f4fa0;
+  color: #ffffff;
+  border-color: #ffffff;
+}
+
+.note-home-button {
+  min-width: 30px;
+  height: 30px;
+  padding: 0;
+  border-radius: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.88);
+  background: #ffffff !important;
+  color: #0f4fa0 !important;
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.note-home-button:hover,
+.note-ai-toggle:hover {
+  background: #eef5ff;
+}
+
+.note-ai-toggle.is-active:hover {
+  background: #0b4388;
+}
+
 .eyebrow {
   margin: 0 0 8px;
   font-size: 0.75rem;
@@ -342,7 +354,6 @@ button {
 .upload-card p,
 .bubble-role,
 .pdf-empty p,
-.pdf-file-meta span,
 .notes-header p,
 .note-card-meta span,
 .note-card-meta.compact span {
@@ -622,27 +633,12 @@ button {
   background: #ffffff;
 }
 
-.pdf-toolbar-copy {
-  display: grid;
-  gap: 4px;
-}
-
-.toolbar-title {
-  font-weight: 700;
-}
-
 .pdf-preview-wrap,
-.pdf-empty,
-.pdf-sheet,
-.notes-panel {
+.pdf-empty {
   padding: 20px;
   border-radius: 22px;
   border: 1px solid rgba(15, 23, 42, 0.08);
   background: #ffffff;
-}
-
-.notes-panel {
-  background: #f8fbff;
 }
 
 .pdf-preview-wrap {
@@ -665,28 +661,29 @@ button {
   border: 0;
   border-radius: 14px;
   padding: 10px 14px;
-  background: #eef2ff;
-  color: #1e3a8a;
+  background: #ffffff;
+  color: #0f4fa0;
   font-weight: 700;
 }
 
 .annotation-actions--compact {
-  gap: 8px;
+  gap: 6px;
 }
 
 .annotation-actions--compact button {
-  min-width: 44px;
-  height: 44px;
-  padding: 0 10px;
+  min-width: 34px;
+  height: 34px;
+  padding: 0 8px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.92rem;
+  border-radius: 10px;
+  font-size: 0.76rem;
   line-height: 1;
 }
 
 .annotation-actions button.is-active {
-  background: #1e3a8a;
+  background: #0f4fa0;
   color: #ffffff;
 }
 
@@ -858,9 +855,6 @@ button {
   color: rgba(15, 23, 42, 0.35);
 }
 
-.pdf-file-meta,
-.page-controls,
-.upload-actions,
 .note-card-meta {
   display: flex;
   align-items: center;
@@ -868,7 +862,6 @@ button {
   flex-wrap: wrap;
 }
 
-.page-controls span,
 .chat-meta span,
 .pdf-meta {
   width: fit-content;
@@ -878,7 +871,6 @@ button {
   font-weight: 700;
 }
 
-.page-controls span,
 .chat-meta span {
   background: #f0f1f4;
 }
@@ -889,28 +881,9 @@ button {
   color: #315da8;
 }
 
-.pdf-frame {
-  width: 100%;
-  min-height: 360px;
-  border: 0;
-  border-radius: 18px;
-  background: #f2f5fa;
-}
-
 .pdf-empty strong {
   display: block;
   margin-bottom: 8px;
-}
-
-.pdf-sheet ul {
-  margin: 18px 0 0;
-  padding-left: 20px;
-}
-
-.context-strip {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
 }
 
 .context-pill {
@@ -930,7 +903,6 @@ button {
   display: none;
 }
 
-.note-editor,
 .chat-composer textarea {
   width: 100%;
   border: 1px solid rgba(24, 35, 50, 0.12);
@@ -1170,8 +1142,7 @@ button {
     display: none;
   }
 
-  .note-toolbar-bar,
-  .note-sidebar-topbar {
+  .note-toolbar-bar {
     border-left: 0;
     border-radius: 0;
   }
@@ -1179,10 +1150,6 @@ button {
   .note-embedded-ai {
     border-right: 0;
     border-bottom: 1px solid rgba(15, 23, 42, 0.06);
-  }
-
-  .context-strip {
-    grid-template-columns: 1fr;
   }
 }
 

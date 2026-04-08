@@ -7,19 +7,8 @@ GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
 const DEFAULT_PDF_PATH = "/4_Maximum%20likelihood%20learning.pdf";
 const COLLAPSED_RAIL = 30;
-const HANDLE_WIDTH = 8;
-const RIGHT_MIN = 320;
 const NOTE_AI_MIN = 260;
 const NOTE_AI_COLLAPSE_THRESHOLD = 240;
-const TEXT_LAYER_PADDING = {
-  top: 56,
-  right: 64,
-  bottom: 80,
-  left: 64,
-};
-const DEFAULT_TEXT_BOX_WIDTH_RATIO = 0.72;
-const MIN_TEXT_BOX_WIDTH_RATIO = 0.18;
-const MIN_TEXT_BOX_HEIGHT_RATIO = 0.05;
 
 const INITIAL_FOLDERS = [
   { id: "freshman-1", name: "1학년 1학기" },
@@ -353,156 +342,6 @@ function buildSelectionPath(points, width, height) {
   return `${commands.join(" ")} Z`;
 }
 
-function cloneTextBoxes(textBoxes = []) {
-  return textBoxes.map((textBox) => ({ ...textBox }));
-}
-
-function sortTextBoxes(textBoxes = []) {
-  return [...textBoxes].sort((left, right) => {
-    if (left.y === right.y) {
-      return left.x - right.x;
-    }
-    return left.y - right.y;
-  });
-}
-
-function buildNoteTextFromTextBoxes(textBoxes = []) {
-  return sortTextBoxes(textBoxes)
-    .map((textBox) => textBox.text.trim())
-    .filter(Boolean)
-    .join("\n");
-}
-
-function migrateNotesToTextBoxes(savedNotes = {}) {
-  return Object.fromEntries(
-    Object.entries(savedNotes)
-      .filter(([, text]) => typeof text === "string" && text.trim())
-      .map(([pageKey, text]) => [
-        pageKey,
-        [
-          {
-            id: `migrated-${pageKey}`,
-            x: 0.084,
-            y: 0.057,
-            width: DEFAULT_TEXT_BOX_WIDTH_RATIO,
-            text,
-          },
-        ],
-      ]),
-  );
-}
-
-function buildNotesFromTextBoxes(textBoxesByPage = {}) {
-  return Object.fromEntries(
-    Object.entries(textBoxesByPage)
-      .map(([pageKey, textBoxes]) => [pageKey, buildNoteTextFromTextBoxes(textBoxes)])
-      .filter(([, text]) => text),
-  );
-}
-
-function measureTextBoxHeight(textarea, nextValue, maxHeight) {
-  const computedStyle = window.getComputedStyle(textarea);
-  const mirror = document.createElement("div");
-  const mirroredProperties = [
-    "boxSizing",
-    "width",
-    "paddingTop",
-    "paddingRight",
-    "paddingBottom",
-    "paddingLeft",
-    "borderTopWidth",
-    "borderRightWidth",
-    "borderBottomWidth",
-    "borderLeftWidth",
-    "fontFamily",
-    "fontSize",
-    "fontWeight",
-    "fontStyle",
-    "letterSpacing",
-    "lineHeight",
-    "textTransform",
-    "textAlign",
-    "whiteSpace",
-    "wordBreak",
-    "overflowWrap",
-  ];
-
-  mirroredProperties.forEach((property) => {
-    mirror.style[property] = computedStyle[property];
-  });
-
-  mirror.style.position = "absolute";
-  mirror.style.visibility = "hidden";
-  mirror.style.pointerEvents = "none";
-  mirror.style.left = "-9999px";
-  mirror.style.top = "0";
-  mirror.style.whiteSpace = "pre-wrap";
-  mirror.style.wordBreak = "break-word";
-  mirror.style.overflowWrap = "break-word";
-  mirror.style.height = "auto";
-  mirror.style.minHeight = "0";
-  mirror.style.maxHeight = "none";
-  mirror.style.overflow = "visible";
-
-  mirror.textContent = nextValue || ".";
-  document.body.appendChild(mirror);
-  const measuredHeight = Math.min(mirror.scrollHeight, maxHeight);
-
-  document.body.removeChild(mirror);
-  return measuredHeight;
-}
-
-function wouldTextBoxOverflow(textarea, nextValue, maxHeight) {
-  const computedStyle = window.getComputedStyle(textarea);
-  const mirror = document.createElement("div");
-  const mirroredProperties = [
-    "boxSizing",
-    "width",
-    "paddingTop",
-    "paddingRight",
-    "paddingBottom",
-    "paddingLeft",
-    "borderTopWidth",
-    "borderRightWidth",
-    "borderBottomWidth",
-    "borderLeftWidth",
-    "fontFamily",
-    "fontSize",
-    "fontWeight",
-    "fontStyle",
-    "letterSpacing",
-    "lineHeight",
-    "textTransform",
-    "textAlign",
-    "whiteSpace",
-    "wordBreak",
-    "overflowWrap",
-  ];
-
-  mirroredProperties.forEach((property) => {
-    mirror.style[property] = computedStyle[property];
-  });
-
-  mirror.style.position = "absolute";
-  mirror.style.visibility = "hidden";
-  mirror.style.pointerEvents = "none";
-  mirror.style.left = "-9999px";
-  mirror.style.top = "0";
-  mirror.style.whiteSpace = "pre-wrap";
-  mirror.style.wordBreak = "break-word";
-  mirror.style.overflowWrap = "break-word";
-  mirror.style.height = "auto";
-  mirror.style.minHeight = "0";
-  mirror.style.maxHeight = "none";
-  mirror.style.overflow = "visible";
-
-  mirror.textContent = nextValue || ".";
-  document.body.appendChild(mirror);
-  const wouldOverflow = mirror.scrollHeight > maxHeight;
-  document.body.removeChild(mirror);
-  return wouldOverflow;
-}
-
 function getTextareaMetrics(textarea) {
   const computedStyle = window.getComputedStyle(textarea);
   const lineHeight =
@@ -565,7 +404,6 @@ export default function App() {
     }, {}),
   );
   const [notesByPage, setNotesByPage] = useState({});
-  const [textBoxesByPage, setTextBoxesByPage] = useState({});
   const [chatByNote, setChatByNote] = useState(
     INITIAL_NOTES.reduce((acc, note) => {
       acc[note.id] = INITIAL_MESSAGES;
@@ -598,7 +436,6 @@ export default function App() {
   const galleryInputRef = useRef(null);
   const pdfInputRef = useRef(null);
   const typingTextareaRefs = useRef({});
-  const textBoxRefs = useRef({});
   const uploadUrlsRef = useRef([]);
   const annotationStageRef = useRef(null);
   const annotationScrollRef = useRef(null);
@@ -612,7 +449,6 @@ export default function App() {
   const liveStrokePointsRef = useRef([]);
   const drawSyncFrameRef = useRef(null);
   const notesByPageRef = useRef({});
-  const textBoxesByPageRef = useRef({});
   const strokesByPageRef = useRef({});
   const undoHistoryRef = useRef([]);
   const redoHistoryRef = useRef([]);
@@ -620,7 +456,6 @@ export default function App() {
   const [pdfPageSizes, setPdfPageSizes] = useState([]);
   const [pdfRenderError, setPdfRenderError] = useState("");
   const [pdfPageCount, setPdfPageCount] = useState(0);
-  const [activeTextBox, setActiveTextBox] = useState(null);
 
   const selectedNote = notes.find((note) => note.id === selectedNoteId) ?? notes[0] ?? INITIAL_NOTES[0];
   const currentPageIndex = pageByNote[selectedNote.id] ?? 0;
@@ -750,10 +585,6 @@ export default function App() {
     localStorage.setItem("campus-notes-text", JSON.stringify(notesByPage));
     notesByPageRef.current = notesByPage;
   }, [notesByPage]);
-
-  useEffect(() => {
-    textBoxesByPageRef.current = textBoxesByPage;
-  }, [textBoxesByPage]);
 
   useEffect(() => {
     localStorage.setItem("campus-notes-strokes", JSON.stringify(strokesByPage));
@@ -946,30 +777,6 @@ export default function App() {
   }, [annotationMode, currentPageIndex, notesByPage, screen, selectedNote.id]);
 
   useEffect(() => {
-    if (screen !== "note") {
-      setActiveTextBox(null);
-      return;
-    }
-
-    if (annotationMode !== "text") {
-      setActiveTextBox(null);
-    }
-  }, [annotationMode, screen, selectedNote.id]);
-
-  useEffect(() => {
-    if (screen !== "note") {
-      return;
-    }
-
-    Object.entries(textBoxesByPage).forEach(([pageKeyForBoxes, textBoxes]) => {
-      const pageIndex = Number(pageKeyForBoxes.split(":")[1] ?? 0);
-      textBoxes.forEach((textBox) => {
-        resizeTextBoxElement(textBoxRefs.current[textBox.id], pageIndex, textBox);
-      });
-    });
-  }, [pageZoom, pdfPageSizes, screen, textBoxesByPage]);
-
-  useEffect(() => {
     if (!contextMenu) {
       return undefined;
     }
@@ -1135,93 +942,6 @@ export default function App() {
       top: Math.max(targetPage.offsetTop - 20, 0),
       behavior,
     });
-  };
-
-  const commitTextBoxesForPage = (targetPageKey, nextTextBoxes) => {
-    const nextState = { ...textBoxesByPageRef.current };
-    if (nextTextBoxes.length === 0) {
-      delete nextState[targetPageKey];
-    } else {
-      nextState[targetPageKey] = nextTextBoxes;
-    }
-    textBoxesByPageRef.current = nextState;
-    setTextBoxesByPage(nextState);
-  };
-
-  const getPageTextBoxes = (pageIndex) => textBoxesByPageRef.current[`${selectedNote.id}:${pageIndex}`] ?? [];
-
-  const getTextBoxMaxHeight = (pageSize, textBox) =>
-    Math.max(56, pageSize.height * (1 - textBox.y) - TEXT_LAYER_PADDING.bottom);
-
-  const resizeTextBoxElement = (element, pageIndex, textBox) => {
-    if (!element || !textBox) {
-      return;
-    }
-
-    const pageSize = pdfPageSizes[pageIndex] ?? { width: 760, height: 980 };
-    const maxHeight = getTextBoxMaxHeight(pageSize, textBox);
-    element.style.height = "0px";
-    element.style.height = `${measureTextBoxHeight(element, element.value, maxHeight)}px`;
-  };
-
-  const queueTextBoxFocus = (pageIndex, boxId, caret = "end") => {
-    pendingTextFocusRef.current = { pageIndex, boxId, caret };
-    setActiveTextBox({ pageIndex, boxId });
-    setPageByNote((current) => ({
-      ...current,
-      [selectedNote.id]: pageIndex,
-    }));
-  };
-
-  const createTextBoxOnPage = (pageIndex, point = null) => {
-    const pageSize = pdfPageSizes[pageIndex] ?? { width: 760, height: 980 };
-    const leftBoundary = TEXT_LAYER_PADDING.left / pageSize.width;
-    const rightBoundary = TEXT_LAYER_PADDING.right / pageSize.width;
-    const topBoundary = TEXT_LAYER_PADDING.top / pageSize.height;
-    const bottomBoundary = TEXT_LAYER_PADDING.bottom / pageSize.height;
-    const x = clamp(
-      point?.x ?? leftBoundary,
-      leftBoundary,
-      1 - rightBoundary - MIN_TEXT_BOX_WIDTH_RATIO,
-    );
-    const y = clamp(
-      point?.y ?? topBoundary,
-      topBoundary,
-      1 - bottomBoundary - MIN_TEXT_BOX_HEIGHT_RATIO,
-    );
-    const width = clamp(
-      DEFAULT_TEXT_BOX_WIDTH_RATIO,
-      MIN_TEXT_BOX_WIDTH_RATIO,
-      1 - x - rightBoundary,
-    );
-    const nextTextBox = {
-      id: `textbox-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      x,
-      y,
-      width,
-      text: "",
-    };
-    const targetPageKey = `${selectedNote.id}:${pageIndex}`;
-    const nextTextBoxes = [...getPageTextBoxes(pageIndex), nextTextBox];
-
-    commitTextBoxesForPage(targetPageKey, nextTextBoxes);
-    queueTextBoxFocus(pageIndex, nextTextBox.id);
-    scrollToPage(pageIndex);
-    return nextTextBox;
-  };
-
-  const removeTextBoxFromPage = (pageIndex, textBoxId) => {
-    const targetPageKey = `${selectedNote.id}:${pageIndex}`;
-    const nextTextBoxes = getPageTextBoxes(pageIndex).filter((textBox) => textBox.id !== textBoxId);
-    commitTextBoxesForPage(targetPageKey, nextTextBoxes);
-    if (activeTextBox?.boxId === textBoxId) {
-      setActiveTextBox(null);
-    }
-  };
-
-  const findLastTextBoxOnPage = (pageIndex) => {
-    const sorted = sortTextBoxes(getPageTextBoxes(pageIndex));
-    return sorted[sorted.length - 1] ?? null;
   };
 
   const handleFolderSelect = (folderId) => {
@@ -2103,7 +1823,7 @@ export default function App() {
         : `${COLLAPSED_RAIL}px minmax(0, 1fr)`;
 
   const noteWorkspaceColumns = [
-    rightOpen ? `${rightWidth}px` : `${COLLAPSED_RAIL}px`,
+    rightOpen ? `${rightWidth}px` : "0px",
     "0px",
     "minmax(0, 1fr)",
   ].join(" ");
@@ -2285,34 +2005,6 @@ export default function App() {
             <section className="panel workspace note-detail-panel">
               <div className="note-study-shell">
                 <div className="note-workspace-grid" style={{ gridTemplateColumns: noteWorkspaceColumns }}>
-                <div className="note-sidebar-topbar">
-                  {rightOpen ? (
-                    <>
-                      <div>
-                        <p className="eyebrow">AI Assistant</p>
-                        <strong>페이지 기반 질의응답</strong>
-                      </div>
-                      <button
-                        type="button"
-                        className="sidebar-toggle"
-                        onClick={() => setRightOpen(false)}
-                        aria-label="AI 어시스턴트 접기"
-                      >
-                        ◀
-                      </button>
-                    </>
-                  ) : (
-                    <button
-                      type="button"
-                      className="collapsed-toggle collapsed-toggle--inline"
-                      onClick={() => setRightOpen(true)}
-                      aria-label="AI 어시스턴트 열기"
-                    >
-                      AI
-                    </button>
-                  )}
-                </div>
-
                 <div
                   className={`resize-handle note-inline-handle ${rightOpen ? "" : "is-hidden"}`}
                   onMouseDown={() => rightOpen && setDragging("note-ai")}
@@ -2323,10 +2015,18 @@ export default function App() {
 
                 <div className="workspace-topbar note-toolbar-bar">
                   <div className="workspace-title-row">
-                    <button type="button" className="back-link" onClick={() => setScreen("home")}>
-                      ← 메인으로
+                    <button type="button" className="back-link note-home-button" onClick={() => setScreen("home")} aria-label="메인으로">
+                      ⌂
                     </button>
                     <h2>{selectedNote.name}</h2>
+                    <button
+                      type="button"
+                      className={`note-ai-toggle ${rightOpen ? "is-active" : ""}`}
+                      onClick={() => setRightOpen((current) => !current)}
+                      aria-label={rightOpen ? "AI 어시스턴트 접기" : "AI 어시스턴트 열기"}
+                    >
+                      AI
+                    </button>
                   </div>
                   <div className="note-top-actions annotation-actions annotation-actions--compact">
                   <button
@@ -2399,11 +2099,12 @@ export default function App() {
                     accept="application/pdf"
                     onChange={handlePdfUpload}
                   />
-                </div>
+                  </div>
+                  <div className="note-toolbar-spacer" aria-hidden="true" />
                 </div>
 
-                <div className={`note-embedded-ai ${rightOpen ? "" : "is-collapsed"}`}>
-                  {rightOpen ? (
+                {rightOpen ? (
+                  <div className="note-embedded-ai">
                     <div className="chat-panel note-ai-panel note-ai-panel--embedded">
                       <div className="chat-meta">
                         <span>{selectedNote.code}</span>
@@ -2441,10 +2142,8 @@ export default function App() {
                         </button>
                       </div>
                     </div>
-                  ) : (
-                    <div className="note-ai-collapsed-marker" />
-                  )}
-                </div>
+                  </div>
+                ) : null}
 
                 <div className="note-content">
                   <div className="pdf-viewer annotation-workspace">
