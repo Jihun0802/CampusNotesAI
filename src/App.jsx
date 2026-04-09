@@ -213,6 +213,13 @@ const INITIAL_MESSAGES = [
   },
 ];
 
+const PEN_COLORS = [
+  { id: "blue", label: "파랑", value: "#1d4ed8" },
+  { id: "black", label: "검정", value: "#111827" },
+  { id: "green", label: "초록", value: "#047857" },
+  { id: "red", label: "빨강", value: "#dc2626" },
+];
+
 const NAV_ITEMS = [
   { id: "all", label: "모든 노트" },
   { id: "favorites", label: "즐겨찾기" },
@@ -389,6 +396,47 @@ function ensureLineExists(value, lineIndex) {
   return `${value}${"\n".repeat(lineIndex - currentLineCount + 1)}`;
 }
 
+function splitStrokeByPoint(stroke, point, threshold = 0.02) {
+  const segments = [];
+  let currentSegment = [];
+  let touched = false;
+
+  stroke.points.forEach((strokePoint) => {
+    const isErased = Math.hypot(strokePoint.x - point.x, strokePoint.y - point.y) <= threshold;
+    if (isErased) {
+      touched = true;
+      if (currentSegment.length >= 2) {
+        segments.push(currentSegment);
+      }
+      currentSegment = [];
+      return;
+    }
+
+    currentSegment.push(strokePoint);
+  });
+
+  if (currentSegment.length >= 2) {
+    segments.push(currentSegment);
+  }
+
+  if (!touched) {
+    return { touched: false, nextStrokes: [stroke] };
+  }
+
+  return {
+    touched: true,
+    nextStrokes: segments.map((segment, index) => ({
+      ...stroke,
+      id: `${stroke.id}-part-${index}-${Date.now()}`,
+      points: segment,
+    })),
+  };
+}
+
+function mapPenWidthToStrokeWidth(penWidth) {
+  return Number((1 + (penWidth / 100) * 11).toFixed(2));
+}
+
 export default function App() {
   const [folders, setFolders] = useState(INITIAL_FOLDERS);
   const [notes, setNotes] = useState(INITIAL_NOTES);
@@ -423,10 +471,16 @@ export default function App() {
   });
   const [question, setQuestion] = useState("");
   const [isThinking, setIsThinking] = useState(false);
+  const [saveStatus, setSaveStatus] = useState("saved");
+  const [pageJumpInput, setPageJumpInput] = useState("1");
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
   const [rightWidth, setRightWidth] = useState(320);
   const [annotationMode, setAnnotationMode] = useState("draw");
+  const [toolMenu, setToolMenu] = useState(null);
+  const [penColor, setPenColor] = useState(PEN_COLORS[0].value);
+  const [penWidth, setPenWidth] = useState(28);
+  const [eraserMode, setEraserMode] = useState("partial");
   const [captureSelection, setCaptureSelection] = useState(null);
   const [pageZoom, setPageZoom] = useState(1);
   const [dragging, setDragging] = useState(null);
@@ -453,6 +507,7 @@ export default function App() {
   const undoHistoryRef = useRef([]);
   const redoHistoryRef = useRef([]);
   const isApplyingHistoryRef = useRef(false);
+  const saveStatusTimerRef = useRef(null);
   const [pdfPageSizes, setPdfPageSizes] = useState([]);
   const [pdfRenderError, setPdfRenderError] = useState("");
   const [pdfPageCount, setPdfPageCount] = useState(0);
@@ -531,6 +586,9 @@ export default function App() {
       if (drawSyncFrameRef.current) {
         window.cancelAnimationFrame(drawSyncFrameRef.current);
       }
+      if (saveStatusTimerRef.current) {
+        window.clearTimeout(saveStatusTimerRef.current);
+      }
     };
   }, []);
 
@@ -598,6 +656,21 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem("campus-notes-page-index", JSON.stringify(pageByNote));
   }, [pageByNote]);
+
+  useEffect(() => {
+    setPageJumpInput(String(currentPageIndex + 1));
+  }, [currentPageIndex, selectedNote.id]);
+
+  useEffect(() => {
+    setSaveStatus("saving");
+    if (saveStatusTimerRef.current) {
+      window.clearTimeout(saveStatusTimerRef.current);
+    }
+    saveStatusTimerRef.current = window.setTimeout(() => {
+      setSaveStatus("saved");
+      saveStatusTimerRef.current = null;
+    }, 280);
+  }, [notesByPage, pageByNote, redoStrokesByPage, strokesByPage]);
 
   useEffect(() => {
     if (screen !== "note" || !currentPdf || !annotationStageRef.current) {
@@ -932,6 +1005,16 @@ export default function App() {
     setRightOpen(true);
   };
 
+  const activateDrawMode = () => {
+    setAnnotationMode("draw");
+    setToolMenu((current) => (current === "draw" ? null : "draw"));
+  };
+
+  const activateEraseMode = () => {
+    setAnnotationMode("erase");
+    setToolMenu((current) => (current === "erase" ? null : "erase"));
+  };
+
   const scrollToPage = (pageIndex, behavior = "smooth") => {
     const targetPage = pageSurfaceRefs.current[pageIndex];
     if (!targetPage) {
@@ -953,6 +1036,16 @@ export default function App() {
 
   const activateTextMode = () => {
     setAnnotationMode("text");
+    setToolMenu(null);
+  };
+
+  const handleJumpToPage = () => {
+    const nextPageIndex = clamp(Number(pageJumpInput) - 1, 0, Math.max(renderedPageCount - 1, 0));
+    setPageByNote((current) => ({
+      ...current,
+      [selectedNote.id]: nextPageIndex,
+    }));
+    scrollToPage(nextPageIndex);
   };
 
   const closeContextMenu = () => {
@@ -1204,6 +1297,17 @@ export default function App() {
       return;
     }
 
+    if (entry.kind === "page-strokes-replace") {
+      const nextStrokes = direction === "undo" ? entry.beforeStrokes : entry.afterStrokes;
+      strokesByPageRef.current = {
+        ...strokesByPageRef.current,
+        [entry.pageKey]: nextStrokes,
+      };
+      setStrokesByPage(strokesByPageRef.current);
+      isApplyingHistoryRef.current = false;
+      return;
+    }
+
     if (entry.kind === "clear-page") {
       const nextText = direction === "undo" ? entry.beforeText : "";
       const nextStrokes = direction === "undo" ? entry.beforeStrokes : [];
@@ -1321,7 +1425,12 @@ export default function App() {
       ...current,
       [targetPageKey]: [
         ...(current[targetPageKey] ?? []),
-        { id: strokeId, points: liveStrokePointsRef.current },
+        {
+          id: strokeId,
+          points: liveStrokePointsRef.current,
+          color: penColor,
+          width: mapPenWidthToStrokeWidth(penWidth),
+        },
       ],
     }));
   };
@@ -1429,13 +1538,13 @@ export default function App() {
         const pageStrokes = strokesByPage[pageKeyForCapture] ?? [];
         exportContext.lineCap = "round";
         exportContext.lineJoin = "round";
-        exportContext.strokeStyle = "#1d4ed8";
-        exportContext.lineWidth = 4;
         pageStrokes.forEach((stroke) => {
           if (stroke.points.length < 2) {
             return;
           }
 
+          exportContext.strokeStyle = stroke.color ?? "#1d4ed8";
+          exportContext.lineWidth = stroke.width ?? 4;
           exportContext.beginPath();
           stroke.points.forEach((point, index) => {
             const x = point.x * pageSize.width - minX;
@@ -1491,8 +1600,42 @@ export default function App() {
 
     const targetPageKey = `${selectedNote.id}:${pageIndex}`;
     const currentPageStrokes = strokesByPageRef.current[targetPageKey] ?? [];
-    const removedStrokes = currentPageStrokes.filter((stroke) => strokeTouchesPoint(stroke, point));
-    if (removedStrokes.length === 0) {
+    if (eraserMode === "stroke") {
+      const removedStrokes = currentPageStrokes.filter((stroke) => strokeTouchesPoint(stroke, point));
+      if (removedStrokes.length === 0) {
+        return;
+      }
+
+      setRedoStrokesByPage((current) => ({
+        ...current,
+        [targetPageKey]: [],
+      }));
+      const nextStrokes = currentPageStrokes.filter(
+        (stroke) => !removedStrokes.some((removed) => removed.id === stroke.id),
+      );
+      strokesByPageRef.current = {
+        ...strokesByPageRef.current,
+        [targetPageKey]: nextStrokes,
+      };
+      setStrokesByPage(strokesByPageRef.current);
+      pushHistory({
+        kind: "erase-strokes",
+        pageKey: targetPageKey,
+        removedStrokes,
+      });
+      return;
+    }
+
+    let touched = false;
+    const nextStrokes = currentPageStrokes.flatMap((stroke) => {
+      const result = splitStrokeByPoint(stroke, point);
+      if (result.touched) {
+        touched = true;
+      }
+      return result.nextStrokes;
+    });
+
+    if (!touched) {
       return;
     }
 
@@ -1500,18 +1643,16 @@ export default function App() {
       ...current,
       [targetPageKey]: [],
     }));
-    const nextStrokes = currentPageStrokes.filter(
-      (stroke) => !removedStrokes.some((removed) => removed.id === stroke.id),
-    );
     strokesByPageRef.current = {
       ...strokesByPageRef.current,
       [targetPageKey]: nextStrokes,
     };
     setStrokesByPage(strokesByPageRef.current);
     pushHistory({
-      kind: "erase-strokes",
+      kind: "page-strokes-replace",
       pageKey: targetPageKey,
-      removedStrokes,
+      beforeStrokes: currentPageStrokes,
+      afterStrokes: nextStrokes,
     });
   };
 
@@ -2034,7 +2175,7 @@ export default function App() {
                     title="손글씨"
                     aria-label="손글씨"
                     className={annotationMode === "draw" ? "is-active" : ""}
-                    onClick={() => setAnnotationMode("draw")}
+                    onClick={activateDrawMode}
                   >
                     ✎
                   </button>
@@ -2052,7 +2193,7 @@ export default function App() {
                     title="지우개"
                     aria-label="지우개"
                     className={annotationMode === "erase" ? "is-active" : ""}
-                    onClick={() => setAnnotationMode("erase")}
+                    onClick={activateEraseMode}
                   >
                     ⌫
                   </button>
@@ -2061,7 +2202,10 @@ export default function App() {
                     title="영역 캡처"
                     aria-label="영역 캡처"
                     className={annotationMode === "capture" ? "is-active" : ""}
-                    onClick={() => setAnnotationMode("capture")}
+                    onClick={() => {
+                      setAnnotationMode("capture");
+                      setToolMenu(null);
+                    }}
                   >
                     ▣
                   </button>
@@ -2100,6 +2244,62 @@ export default function App() {
                     onChange={handlePdfUpload}
                   />
                   </div>
+                  {toolMenu === "draw" ? (
+                    <div className="tool-option-bar" aria-label="펜 옵션">
+                      <div className="tool-option-group">
+                        <span>색상</span>
+                        <div className="tool-chip-row">
+                          {PEN_COLORS.map((color) => (
+                            <button
+                              key={color.id}
+                              type="button"
+                              className={`color-swatch ${penColor === color.value ? "is-active" : ""}`}
+                              style={{ "--swatch-color": color.value }}
+                              onClick={() => setPenColor(color.value)}
+                              aria-label={`${color.label} 펜`}
+                            />
+                          ))}
+                        </div>
+                      </div>
+                      <div className="tool-option-group">
+                        <span>굵기</span>
+                        <div className="tool-width-control">
+                          <input
+                            type="range"
+                            min="1"
+                            max="100"
+                            value={penWidth}
+                            onChange={(event) => setPenWidth(Number(event.target.value))}
+                            aria-label="펜 굵기"
+                          />
+                          <strong>{penWidth}</strong>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+                  {toolMenu === "erase" ? (
+                    <div className="tool-option-bar" aria-label="지우개 옵션">
+                      <div className="tool-option-group">
+                        <span>지우개 방식</span>
+                        <div className="tool-chip-row">
+                          <button
+                            type="button"
+                            className={`tool-chip ${eraserMode === "partial" ? "is-active" : ""}`}
+                            onClick={() => setEraserMode("partial")}
+                          >
+                            부분지우개
+                          </button>
+                          <button
+                            type="button"
+                            className={`tool-chip ${eraserMode === "stroke" ? "is-active" : ""}`}
+                            onClick={() => setEraserMode("stroke")}
+                          >
+                            선택지우개
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
                   <div className="note-toolbar-spacer" aria-hidden="true" />
                 </div>
 
@@ -2146,11 +2346,74 @@ export default function App() {
                 ) : null}
 
                 <div className="note-content">
-                  <div className="pdf-viewer annotation-workspace">
-                    {currentPdf ? (
-                      <div className="annotation-board">
-                        <div className="annotation-stage" ref={annotationStageRef}>
-                          <div className="annotation-scroll" ref={annotationScrollRef}>
+                  <div className="note-document-layout">
+                    <aside className="page-thumbnail-rail" aria-label="페이지 썸네일">
+                      <div className="page-rail-header">
+                        <strong>페이지</strong>
+                        <span>{renderedPageCount}장</span>
+                      </div>
+                      <div className="page-thumbnail-list">
+                        {Array.from({ length: renderedPageCount }, (_, pageIndex) => {
+                          const pageInfo = selectedNote.pages[pageIndex];
+                          const isActive = pageIndex === currentPageIndex;
+
+                          return (
+                            <button
+                              key={`thumb-${selectedNote.id}-${pageIndex}`}
+                              type="button"
+                              className={`page-thumbnail-card ${isActive ? "is-active" : ""}`}
+                              onClick={() => {
+                                setPageByNote((current) => ({
+                                  ...current,
+                                  [selectedNote.id]: pageIndex,
+                                }));
+                                scrollToPage(pageIndex);
+                              }}
+                            >
+                              <span className="page-thumbnail-number">{pageIndex + 1}</span>
+                              <div className="page-thumbnail-sheet">
+                                <span>{pageInfo?.title ?? `${pageIndex + 1}페이지`}</span>
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </aside>
+
+                    <div className="pdf-viewer annotation-workspace">
+                      <div className="document-ux-bar">
+                        <div className="document-ux-meta">
+                          <span className="document-chip">
+                            {currentPageIndex + 1} / {renderedPageCount} 페이지
+                          </span>
+                          <span className={`document-chip save-chip save-chip--${saveStatus}`}>
+                            {saveStatus === "saving" ? "저장 중..." : "저장됨"}
+                          </span>
+                        </div>
+                        <form
+                          className="page-jump-form"
+                          onSubmit={(event) => {
+                            event.preventDefault();
+                            handleJumpToPage();
+                          }}
+                        >
+                          <label htmlFor="page-jump-input">페이지 이동</label>
+                          <input
+                            id="page-jump-input"
+                            type="number"
+                            min="1"
+                            max={renderedPageCount}
+                            value={pageJumpInput}
+                            onChange={(event) => setPageJumpInput(event.target.value)}
+                          />
+                          <button type="submit">이동</button>
+                        </form>
+                      </div>
+
+                      {currentPdf ? (
+                        <div className="annotation-board">
+                          <div className="annotation-stage" ref={annotationStageRef}>
+                            <div className="annotation-scroll" ref={annotationScrollRef}>
                             {Array.from({ length: renderedPageCount }, (_, pageIndex) => {
                               const pageKeyForRender = `${selectedNote.id}:${pageIndex}`;
                               const pageStrokes = strokesByPage[pageKeyForRender] ?? [];
@@ -2206,8 +2469,8 @@ export default function App() {
                                           key={stroke.id}
                                           d={buildStrokePath(stroke.points, pageSize.width, pageSize.height)}
                                           fill="none"
-                                          stroke="#1d4ed8"
-                                          strokeWidth="4"
+                                          stroke={stroke.color ?? "#1d4ed8"}
+                                          strokeWidth={stroke.width ?? 4}
                                           strokeLinecap="round"
                                           strokeLinejoin="round"
                                         />
@@ -2253,37 +2516,38 @@ export default function App() {
                                 </div>
                               );
                             })}
+                            </div>
                           </div>
+
+                          {currentUploads.length > 0 ? (
+                            <div className="paper-upload-strip">
+                              {currentUploads.map((upload) => (
+                                <figure key={upload.id} className="paper-upload-card">
+                                  <img src={upload.previewUrl} alt={upload.name} />
+                                  <figcaption>{upload.name}</figcaption>
+                                </figure>
+                              ))}
+                            </div>
+                          ) : null}
+
+                          {currentCaptures.length > 0 ? (
+                            <div className="capture-strip">
+                              {currentCaptures.map((capture) => (
+                                <figure key={capture.id} className="capture-card">
+                                  <img src={capture.previewUrl} alt={`캡처 ${capture.pageIndex + 1}`} />
+                                  <figcaption>{capture.pageIndex + 1}페이지 캡처</figcaption>
+                                </figure>
+                              ))}
+                            </div>
+                          ) : null}
                         </div>
-
-                        {currentUploads.length > 0 ? (
-                          <div className="paper-upload-strip">
-                            {currentUploads.map((upload) => (
-                              <figure key={upload.id} className="paper-upload-card">
-                                <img src={upload.previewUrl} alt={upload.name} />
-                                <figcaption>{upload.name}</figcaption>
-                              </figure>
-                            ))}
-                          </div>
-                        ) : null}
-
-                        {currentCaptures.length > 0 ? (
-                          <div className="capture-strip">
-                            {currentCaptures.map((capture) => (
-                              <figure key={capture.id} className="capture-card">
-                                <img src={capture.previewUrl} alt={`캡처 ${capture.pageIndex + 1}`} />
-                                <figcaption>{capture.pageIndex + 1}페이지 캡처</figcaption>
-                              </figure>
-                            ))}
-                          </div>
-                        ) : null}
-                      </div>
-                    ) : (
-                      <div className="pdf-empty">
-                        <strong>아직 PDF가 연결되지 않았습니다.</strong>
-                        <p>PDF를 연결하면 그 위에 바로 필기하고 타이핑 메모를 남길 수 있습니다.</p>
-                      </div>
-                    )}
+                      ) : (
+                        <div className="pdf-empty">
+                          <strong>아직 PDF가 연결되지 않았습니다.</strong>
+                          <p>PDF를 연결하면 그 위에 바로 필기하고 타이핑 메모를 남길 수 있습니다.</p>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
                 </div>
