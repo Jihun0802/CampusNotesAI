@@ -1,5 +1,17 @@
 ﻿import React, { useEffect, useMemo, useRef, useState } from "react";
 
+import {
+  Home,
+  Camera,
+  Eraser,
+  FileUp,
+  ImagePlus,
+  PenLine,
+  RotateCcw,
+  ScanSearch,
+  Sparkles,
+  Type,
+} from "lucide-react";
 import { GlobalWorkerOptions, getDocument } from "pdfjs-dist";
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 
@@ -254,6 +266,15 @@ function makeImageAnalysis(fileName, currentPage) {
   return `${currentPage.title}와 연결된 판서 이미지로 보이며, ${stem} 키워드가 강조된 자료입니다.`;
 }
 
+function makeCaptureChatAnalysis(currentPage, captureCount, selectedStrokeCount) {
+  const selectionText =
+    selectedStrokeCount > 0
+      ? `캡처 영역에서 손글씨 ${selectedStrokeCount}개가 함께 선택되었습니다.`
+      : "캡처 영역 안에 선택 가능한 손글씨는 없었습니다.";
+
+  return `${currentPage.title} 페이지의 선택 영역을 AI 참고 이미지로 첨부했습니다. ${selectionText} 현재 페이지 핵심은 ${currentPage.bullets[0]}`;
+}
+
 function getPreviewVariant(note) {
   if (note.code === "TOEIC") {
     return "preview-handwriting";
@@ -347,6 +368,85 @@ function buildSelectionPath(points, width, height) {
   });
 
   return `${commands.join(" ")} Z`;
+}
+
+function isPointInsidePolygon(point, polygon) {
+  if (!polygon || polygon.length < 3) {
+    return false;
+  }
+
+  let inside = false;
+  for (let index = 0, previous = polygon.length - 1; index < polygon.length; previous = index, index += 1) {
+    const currentPoint = polygon[index];
+    const previousPoint = polygon[previous];
+    const intersects =
+      currentPoint.y > point.y !== previousPoint.y > point.y &&
+      point.x <
+        ((previousPoint.x - currentPoint.x) * (point.y - currentPoint.y)) /
+          ((previousPoint.y - currentPoint.y) || Number.EPSILON) +
+          currentPoint.x;
+
+    if (intersects) {
+      inside = !inside;
+    }
+  }
+
+  return inside;
+}
+
+function getStrokeBounds(strokes) {
+  const points = strokes.flatMap((stroke) => stroke.points);
+  if (points.length === 0) {
+    return null;
+  }
+
+  const xs = points.map((point) => point.x);
+  const ys = points.map((point) => point.y);
+  const minX = Math.max(Math.min(...xs), 0);
+  const minY = Math.max(Math.min(...ys), 0);
+  const maxX = Math.min(Math.max(...xs), 1);
+  const maxY = Math.min(Math.max(...ys), 1);
+
+  return {
+    x: minX,
+    y: minY,
+    width: Math.max(maxX - minX, 0.001),
+    height: Math.max(maxY - minY, 0.001),
+  };
+}
+
+function strokeIntersectsPolygon(stroke, polygon) {
+  if (!stroke.points.length || !polygon.length) {
+    return false;
+  }
+
+  return (
+    stroke.points.some((point) => isPointInsidePolygon(point, polygon)) ||
+    polygon.some((point) => strokeTouchesPoint(stroke, point, 0.03))
+  );
+}
+
+function selectionContainsPoint(selectionBounds, point) {
+  if (!selectionBounds) {
+    return false;
+  }
+
+  return (
+    point.x >= selectionBounds.x &&
+    point.x <= selectionBounds.x + selectionBounds.width &&
+    point.y >= selectionBounds.y &&
+    point.y <= selectionBounds.y + selectionBounds.height
+  );
+}
+
+function offsetStrokePoints(stroke, deltaX, deltaY) {
+  return {
+    ...stroke,
+    points: stroke.points.map((point) => ({
+      x: clamp(point.x + deltaX, 0, 1),
+      y: clamp(point.y + deltaY, 0, 1),
+    })),
+  };
 }
 
 function getTextareaMetrics(textarea) {
@@ -462,6 +562,7 @@ export default function App() {
   const [strokesByPage, setStrokesByPage] = useState({});
   const [redoStrokesByPage, setRedoStrokesByPage] = useState({});
   const [capturesByPage, setCapturesByPage] = useState({});
+  const [pendingChatAttachmentByNote, setPendingChatAttachmentByNote] = useState({});
   const [pdfByNote, setPdfByNote] = useState({
     ml: {
       name: "4_Maximum likelihood learning.pdf",
@@ -482,6 +583,8 @@ export default function App() {
   const [penWidth, setPenWidth] = useState(28);
   const [eraserMode, setEraserMode] = useState("partial");
   const [captureSelection, setCaptureSelection] = useState(null);
+  const [strokeSelection, setStrokeSelection] = useState(null);
+  const [selectionMoveState, setSelectionMoveState] = useState(null);
   const [pageZoom, setPageZoom] = useState(1);
   const [dragging, setDragging] = useState(null);
   const [contextMenu, setContextMenu] = useState(null);
@@ -518,10 +621,10 @@ export default function App() {
   const currentPage = selectedNote.pages[safeContentPageIndex];
   const pageKey = `${selectedNote.id}:${currentPageIndex}`;
   const currentNote = notesByPage[pageKey] ?? "";
-  const currentCaptures = capturesByPage[pageKey] ?? [];
   const currentUploads = uploadsByPage[pageKey] ?? [];
   const currentPdf = pdfByNote[selectedNote.id] ?? null;
   const messages = chatByNote[selectedNote.id] ?? INITIAL_MESSAGES;
+  const pendingChatAttachment = pendingChatAttachmentByNote[selectedNote.id] ?? null;
   const selectedFolder = folders.find((folder) => folder.id === selectedFolderId) ?? null;
   const renderedPageCount = pdfPageCount || selectedNote.pages.length;
 
@@ -1015,6 +1118,153 @@ export default function App() {
     setToolMenu((current) => (current === "erase" ? null : "erase"));
   };
 
+  const updateStrokeSelection = (pageIndex, strokeIds) => {
+    const targetPageKey = `${selectedNote.id}:${pageIndex}`;
+    const pageStrokes = strokesByPageRef.current[targetPageKey] ?? [];
+    const selectedStrokes = pageStrokes.filter((stroke) => strokeIds.includes(stroke.id));
+    const bounds = getStrokeBounds(selectedStrokes);
+
+    if (!bounds || selectedStrokes.length === 0) {
+      setStrokeSelection(null);
+      return null;
+    }
+
+    const nextSelection = {
+      pageIndex,
+      pageKey: targetPageKey,
+      strokeIds: selectedStrokes.map((stroke) => stroke.id),
+      bounds,
+    };
+    setStrokeSelection(nextSelection);
+    return nextSelection;
+  };
+
+  const handleSelectionCopy = () => {
+    if (!strokeSelection) {
+      return;
+    }
+
+    const currentPageStrokes = strokesByPageRef.current[strokeSelection.pageKey] ?? [];
+    const selectedIds = new Set(strokeSelection.strokeIds);
+    const copiedStrokes = currentPageStrokes
+      .filter((stroke) => selectedIds.has(stroke.id))
+      .map((stroke, index) => ({
+        ...offsetStrokePoints(stroke, 0.02, 0.02),
+        id: `${stroke.id}-copy-${Date.now()}-${index}`,
+      }));
+
+    if (copiedStrokes.length === 0) {
+      return;
+    }
+
+    const nextStrokes = [...currentPageStrokes, ...copiedStrokes];
+    strokesByPageRef.current = {
+      ...strokesByPageRef.current,
+      [strokeSelection.pageKey]: nextStrokes,
+    };
+    setStrokesByPage(strokesByPageRef.current);
+    setRedoStrokesByPage((current) => ({
+      ...current,
+      [strokeSelection.pageKey]: [],
+    }));
+    pushHistory({
+      kind: "page-strokes-replace",
+      pageKey: strokeSelection.pageKey,
+      beforeStrokes: currentPageStrokes,
+      afterStrokes: nextStrokes,
+    });
+    updateStrokeSelection(strokeSelection.pageIndex, copiedStrokes.map((stroke) => stroke.id));
+    setContextMenu(null);
+  };
+
+  const handleSelectionDelete = () => {
+    if (!strokeSelection) {
+      return;
+    }
+
+    const currentPageStrokes = strokesByPageRef.current[strokeSelection.pageKey] ?? [];
+    const selectedIds = new Set(strokeSelection.strokeIds);
+    const nextStrokes = currentPageStrokes.filter((stroke) => !selectedIds.has(stroke.id));
+
+    strokesByPageRef.current = {
+      ...strokesByPageRef.current,
+      [strokeSelection.pageKey]: nextStrokes,
+    };
+    setStrokesByPage(strokesByPageRef.current);
+    setRedoStrokesByPage((current) => ({
+      ...current,
+      [strokeSelection.pageKey]: [],
+    }));
+    pushHistory({
+      kind: "page-strokes-replace",
+      pageKey: strokeSelection.pageKey,
+      beforeStrokes: currentPageStrokes,
+      afterStrokes: nextStrokes,
+    });
+    setStrokeSelection(null);
+    setContextMenu(null);
+  };
+
+  const handleSelectionStyleChange = () => {
+    if (!strokeSelection) {
+      return;
+    }
+
+    const currentPageStrokes = strokesByPageRef.current[strokeSelection.pageKey] ?? [];
+    const selectedIds = new Set(strokeSelection.strokeIds);
+    const sampleStroke = currentPageStrokes.find((stroke) => selectedIds.has(stroke.id)) ?? null;
+    const nextColor = window.prompt("변경할 색상 코드를 입력하세요.", sampleStroke?.color ?? penColor);
+    if (!nextColor?.trim()) {
+      return;
+    }
+
+    const nextWidthInput = window.prompt(
+      "변경할 두께를 입력하세요. (1-24)",
+      String(Math.round(sampleStroke?.width ?? mapPenWidthToStrokeWidth(penWidth))),
+    );
+    if (!nextWidthInput?.trim()) {
+      return;
+    }
+
+    const nextWidth = clamp(Number(nextWidthInput), 1, 24);
+    if (!Number.isFinite(nextWidth)) {
+      return;
+    }
+
+    const nextStrokes = currentPageStrokes.map((stroke) =>
+      selectedIds.has(stroke.id)
+        ? { ...stroke, color: nextColor.trim(), width: nextWidth }
+        : stroke,
+    );
+
+    strokesByPageRef.current = {
+      ...strokesByPageRef.current,
+      [strokeSelection.pageKey]: nextStrokes,
+    };
+    setStrokesByPage(strokesByPageRef.current);
+    setRedoStrokesByPage((current) => ({
+      ...current,
+      [strokeSelection.pageKey]: [],
+    }));
+    pushHistory({
+      kind: "page-strokes-replace",
+      pageKey: strokeSelection.pageKey,
+      beforeStrokes: currentPageStrokes,
+      afterStrokes: nextStrokes,
+    });
+    updateStrokeSelection(strokeSelection.pageIndex, strokeSelection.strokeIds);
+    setContextMenu(null);
+  };
+
+  const handleSelectionMoveRequest = () => {
+    if (!strokeSelection) {
+      return;
+    }
+
+    setSelectionMoveState(strokeSelection);
+    setContextMenu(null);
+  };
+
   const scrollToPage = (pageIndex, behavior = "smooth") => {
     const targetPage = pageSurfaceRefs.current[pageIndex];
     if (!targetPage) {
@@ -1378,6 +1628,43 @@ export default function App() {
       return;
     }
 
+    if (selectionMoveState && selectionMoveState.pageIndex === pageIndex) {
+      const point = getAnnotationPoint(pageIndex, event);
+      if (!point) {
+        return;
+      }
+
+      const targetPageKey = `${selectedNote.id}:${pageIndex}`;
+      const currentPageStrokes = strokesByPageRef.current[targetPageKey] ?? [];
+      const selectedIds = new Set(selectionMoveState.strokeIds);
+      const deltaX = point.x - selectionMoveState.bounds.x;
+      const deltaY = point.y - selectionMoveState.bounds.y;
+      const nextStrokes = currentPageStrokes.map((stroke) =>
+        selectedIds.has(stroke.id) ? offsetStrokePoints(stroke, deltaX, deltaY) : stroke,
+      );
+
+      strokesByPageRef.current = {
+        ...strokesByPageRef.current,
+        [targetPageKey]: nextStrokes,
+      };
+      setStrokesByPage(strokesByPageRef.current);
+      setRedoStrokesByPage((current) => ({
+        ...current,
+        [targetPageKey]: [],
+      }));
+      pushHistory({
+        kind: "page-strokes-replace",
+        pageKey: targetPageKey,
+        beforeStrokes: currentPageStrokes,
+        afterStrokes: nextStrokes,
+      });
+      updateStrokeSelection(pageIndex, selectionMoveState.strokeIds);
+      setSelectionMoveState(null);
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+
     if (annotationMode === "capture") {
       const point = getAnnotationPoint(pageIndex, event);
       if (!point) {
@@ -1394,6 +1681,7 @@ export default function App() {
     }
 
     if (annotationMode === "erase") {
+      setStrokeSelection(null);
       handleEraseStroke(pageIndex, event);
       return;
     }
@@ -1410,6 +1698,7 @@ export default function App() {
     event.currentTarget.setPointerCapture?.(event.pointerId);
     event.preventDefault();
     event.stopPropagation();
+    setStrokeSelection(null);
     activePointerIdRef.current = event.pointerId;
     isDrawingRef.current = true;
     liveStrokePointsRef.current = [point];
@@ -1504,6 +1793,7 @@ export default function App() {
       const pageKeyForCapture = `${selectedNote.id}:${pageIndex}`;
       const pageSize = pdfPageSizes[pageIndex] ?? { width: 760, height: 980 };
       const canvas = pdfCanvasRefs.current[pageIndex];
+      const targetPage = selectedNote.pages[Math.min(pageIndex, selectedNote.pages.length - 1)] ?? currentPage;
 
       if (canvas) {
         const xs = points.map((point) => point.x * pageSize.width);
@@ -1563,11 +1853,35 @@ export default function App() {
           id: `capture-${Date.now()}`,
           pageIndex,
           previewUrl: exportCanvas.toDataURL("image/png"),
+          analysis: makeCaptureChatAnalysis(targetPage, (capturesByPage[pageKeyForCapture] ?? []).length + 1, 0),
         };
 
         setCapturesByPage((current) => ({
           ...current,
           [pageKeyForCapture]: [...(current[pageKeyForCapture] ?? []), capture],
+        }));
+
+        const selectedStrokeIds = pageStrokes
+          .filter((stroke) => strokeIntersectsPolygon(stroke, points))
+          .map((stroke) => stroke.id);
+        const selectedCount = selectedStrokeIds.length;
+
+        capture.analysis = makeCaptureChatAnalysis(targetPage, (capturesByPage[pageKeyForCapture] ?? []).length + 1, selectedCount);
+
+        if (selectedStrokeIds.length > 0) {
+          updateStrokeSelection(pageIndex, selectedStrokeIds);
+        } else {
+          setStrokeSelection(null);
+        }
+
+        setPendingChatAttachmentByNote((current) => ({
+          ...current,
+          [selectedNote.id]: {
+            id: capture.id,
+            previewUrl: capture.previewUrl,
+            imageLabel: `${pageIndex + 1}페이지 캡처`,
+            analysis: capture.analysis,
+          },
         }));
       }
     }
@@ -1698,6 +2012,25 @@ export default function App() {
       const lineStartIndex = getLineStartIndex(nextValue, snappedLineIndex);
       nextTextarea.focus();
       nextTextarea.setSelectionRange(lineStartIndex, lineStartIndex);
+    });
+  };
+
+  const handleAnnotationContextMenu = (pageIndex, event) => {
+    if (!strokeSelection || strokeSelection.pageIndex !== pageIndex) {
+      return;
+    }
+
+    const point = getAnnotationPoint(pageIndex, event);
+    if (!point || !selectionContainsPoint(strokeSelection.bounds, point)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    setContextMenu({
+      type: "stroke-selection",
+      x: event.clientX,
+      y: event.clientY,
     });
   };
 
@@ -1906,19 +2239,26 @@ export default function App() {
 
   const handleAsk = () => {
     const trimmedQuestion = question.trim();
-    if (!trimmedQuestion || isThinking) {
+    const queuedAttachment = pendingChatAttachmentByNote[selectedNote.id] ?? null;
+    if ((!trimmedQuestion && !queuedAttachment) || isThinking) {
       return;
     }
 
     const userMessage = {
       id: `user-${Date.now()}`,
       role: "user",
-      text: trimmedQuestion,
+      text: trimmedQuestion || "영역 캡처 이미지를 보냈습니다.",
+      imageUrl: queuedAttachment?.previewUrl,
+      imageLabel: queuedAttachment?.imageLabel,
     };
 
     setChatByNote((current) => ({
       ...current,
       [selectedNote.id]: [...(current[selectedNote.id] ?? []), userMessage],
+    }));
+    setPendingChatAttachmentByNote((current) => ({
+      ...current,
+      [selectedNote.id]: null,
     }));
     setQuestion("");
     setIsThinking(true);
@@ -1930,7 +2270,9 @@ export default function App() {
         currentPage,
         nearbyPages,
         currentNote,
-        latestImage,
+        queuedAttachment
+          ? { analysis: queuedAttachment.analysis, previewUrl: queuedAttachment.previewUrl }
+          : latestImage,
       );
 
       const assistantMessage = {
@@ -2157,7 +2499,7 @@ export default function App() {
                 <div className="workspace-topbar note-toolbar-bar">
                   <div className="workspace-title-row">
                     <button type="button" className="back-link note-home-button" onClick={() => setScreen("home")} aria-label="메인으로">
-                      ⌂
+                      <Home size={17} strokeWidth={2.1} />
                     </button>
                     <h2>{selectedNote.name}</h2>
                     <button
@@ -2166,7 +2508,7 @@ export default function App() {
                       onClick={() => setRightOpen((current) => !current)}
                       aria-label={rightOpen ? "AI 어시스턴트 접기" : "AI 어시스턴트 열기"}
                     >
-                      AI
+                      <Sparkles size={17} strokeWidth={2.1} />
                     </button>
                   </div>
                   <div className="note-top-actions annotation-actions annotation-actions--compact">
@@ -2177,7 +2519,7 @@ export default function App() {
                     className={annotationMode === "draw" ? "is-active" : ""}
                     onClick={activateDrawMode}
                   >
-                    ✎
+                    <PenLine size={17} strokeWidth={2.1} />
                   </button>
                   <button
                     type="button"
@@ -2186,7 +2528,7 @@ export default function App() {
                     className={annotationMode === "text" ? "is-active" : ""}
                     onClick={activateTextMode}
                   >
-                    T
+                    <Type size={17} strokeWidth={2.1} />
                   </button>
                   <button
                     type="button"
@@ -2195,7 +2537,7 @@ export default function App() {
                     className={annotationMode === "erase" ? "is-active" : ""}
                     onClick={activateEraseMode}
                   >
-                    ⌫
+                    <Eraser size={17} strokeWidth={2.1} />
                   </button>
                   <button
                     type="button"
@@ -2207,19 +2549,19 @@ export default function App() {
                       setToolMenu(null);
                     }}
                   >
-                    ▣
+                    <ScanSearch size={17} strokeWidth={2.1} />
                   </button>
                   <button type="button" title="현재 페이지 지우기" aria-label="현재 페이지 지우기" onClick={handleClearAnnotations}>
-                    ⟲
+                    <RotateCcw size={17} strokeWidth={2.1} />
                   </button>
                   <button type="button" title="이미지 업로드" aria-label="이미지 업로드" onClick={() => galleryInputRef.current?.click()}>
-                    ＋I
+                    <ImagePlus size={17} strokeWidth={2.1} />
                   </button>
                   <button type="button" title="카메라 열기" aria-label="카메라 열기" onClick={() => cameraInputRef.current?.click()}>
-                    Cam
+                    <Camera size={17} strokeWidth={2.1} />
                   </button>
                   <button type="button" title="PDF 업로드" aria-label="PDF 업로드" onClick={() => pdfInputRef.current?.click()}>
-                    PDF
+                    <FileUp size={17} strokeWidth={2.1} />
                   </button>
                   <input
                     ref={galleryInputRef}
@@ -2306,11 +2648,6 @@ export default function App() {
                 {rightOpen ? (
                   <div className="note-embedded-ai">
                     <div className="chat-panel note-ai-panel note-ai-panel--embedded">
-                      <div className="chat-meta">
-                        <span>{selectedNote.code}</span>
-                        <span>{currentPage.title}</span>
-                      </div>
-
                       <div className="chat-thread">
                         {messages.map((message) => (
                           <div
@@ -2318,6 +2655,11 @@ export default function App() {
                             className={`chat-bubble ${message.role === "assistant" ? "assistant" : "user"}`}
                           >
                             <span className="bubble-role">{message.role === "assistant" ? "AI" : "나"}</span>
+                            {message.imageUrl ? (
+                              <figure className="chat-image-attachment">
+                                <img src={message.imageUrl} alt={message.imageLabel ?? "첨부 이미지"} />
+                              </figure>
+                            ) : null}
                             <p>{message.text}</p>
                           </div>
                         ))}
@@ -2331,11 +2673,35 @@ export default function App() {
                       </div>
 
                       <div className="chat-composer">
+                        {pendingChatAttachment ? (
+                          <div className="chat-queued-attachment">
+                            <figure className="chat-image-attachment">
+                              <img
+                                src={pendingChatAttachment.previewUrl}
+                                alt={pendingChatAttachment.imageLabel ?? "첨부 이미지"}
+                              />
+                            </figure>
+                            <div className="chat-queued-meta">
+                              <strong>{pendingChatAttachment.imageLabel ?? "캡처 이미지"}</strong>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setPendingChatAttachmentByNote((current) => ({
+                                    ...current,
+                                    [selectedNote.id]: null,
+                                  }))
+                                }
+                              >
+                                제거
+                              </button>
+                            </div>
+                          </div>
+                        ) : null}
                         <textarea
                           value={question}
                           onChange={(event) => setQuestion(event.target.value)}
                           onKeyDown={handleKeyDown}
-                          placeholder="현재 페이지 내용에 대해 질문해보세요..."
+                          placeholder="현재 페이지 내용이나 첨부 이미지에 대해 질문해보세요..."
                         />
                         <button type="button" onClick={handleAsk}>
                           질문하기
@@ -2347,69 +2713,7 @@ export default function App() {
 
                 <div className="note-content">
                   <div className="note-document-layout">
-                    <aside className="page-thumbnail-rail" aria-label="페이지 썸네일">
-                      <div className="page-rail-header">
-                        <strong>페이지</strong>
-                        <span>{renderedPageCount}장</span>
-                      </div>
-                      <div className="page-thumbnail-list">
-                        {Array.from({ length: renderedPageCount }, (_, pageIndex) => {
-                          const pageInfo = selectedNote.pages[pageIndex];
-                          const isActive = pageIndex === currentPageIndex;
-
-                          return (
-                            <button
-                              key={`thumb-${selectedNote.id}-${pageIndex}`}
-                              type="button"
-                              className={`page-thumbnail-card ${isActive ? "is-active" : ""}`}
-                              onClick={() => {
-                                setPageByNote((current) => ({
-                                  ...current,
-                                  [selectedNote.id]: pageIndex,
-                                }));
-                                scrollToPage(pageIndex);
-                              }}
-                            >
-                              <span className="page-thumbnail-number">{pageIndex + 1}</span>
-                              <div className="page-thumbnail-sheet">
-                                <span>{pageInfo?.title ?? `${pageIndex + 1}페이지`}</span>
-                              </div>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </aside>
-
                     <div className="pdf-viewer annotation-workspace">
-                      <div className="document-ux-bar">
-                        <div className="document-ux-meta">
-                          <span className="document-chip">
-                            {currentPageIndex + 1} / {renderedPageCount} 페이지
-                          </span>
-                          <span className={`document-chip save-chip save-chip--${saveStatus}`}>
-                            {saveStatus === "saving" ? "저장 중..." : "저장됨"}
-                          </span>
-                        </div>
-                        <form
-                          className="page-jump-form"
-                          onSubmit={(event) => {
-                            event.preventDefault();
-                            handleJumpToPage();
-                          }}
-                        >
-                          <label htmlFor="page-jump-input">페이지 이동</label>
-                          <input
-                            id="page-jump-input"
-                            type="number"
-                            min="1"
-                            max={renderedPageCount}
-                            value={pageJumpInput}
-                            onChange={(event) => setPageJumpInput(event.target.value)}
-                          />
-                          <button type="submit">이동</button>
-                        </form>
-                      </div>
-
                       {currentPdf ? (
                         <div className="annotation-board">
                           <div className="annotation-stage" ref={annotationStageRef}>
@@ -2463,17 +2767,31 @@ export default function App() {
                                       onPointerLeave={handleAnnotationPointerUp}
                                       onPointerCancel={handleAnnotationPointerUp}
                                       onLostPointerCapture={handleAnnotationPointerUp}
+                                      onContextMenu={(event) => handleAnnotationContextMenu(pageIndex, event)}
                                     >
                                       {pageStrokes.map((stroke) => (
-                                        <path
-                                          key={stroke.id}
-                                          d={buildStrokePath(stroke.points, pageSize.width, pageSize.height)}
-                                          fill="none"
-                                          stroke={stroke.color ?? "#1d4ed8"}
-                                          strokeWidth={stroke.width ?? 4}
-                                          strokeLinecap="round"
-                                          strokeLinejoin="round"
-                                        />
+                                        <React.Fragment key={stroke.id}>
+                                          {strokeSelection &&
+                                          strokeSelection.pageIndex === pageIndex &&
+                                          strokeSelection.strokeIds.includes(stroke.id) ? (
+                                            <path
+                                              d={buildStrokePath(stroke.points, pageSize.width, pageSize.height)}
+                                              fill="none"
+                                              stroke="rgba(95, 121, 255, 0.35)"
+                                              strokeWidth={(stroke.width ?? 4) + 8}
+                                              strokeLinecap="round"
+                                              strokeLinejoin="round"
+                                            />
+                                          ) : null}
+                                          <path
+                                            d={buildStrokePath(stroke.points, pageSize.width, pageSize.height)}
+                                            fill="none"
+                                            stroke={stroke.color ?? "#1d4ed8"}
+                                            strokeWidth={stroke.width ?? 4}
+                                            strokeLinecap="round"
+                                            strokeLinejoin="round"
+                                          />
+                                        </React.Fragment>
                                       ))}
                                       {captureSelection && captureSelection.pageIndex === pageIndex ? (
                                         <path
@@ -2491,6 +2809,17 @@ export default function App() {
                                         />
                                       ) : null}
                                     </svg>
+                                    {strokeSelection && strokeSelection.pageIndex === pageIndex ? (
+                                      <div
+                                        className="stroke-selection-box"
+                                        style={{
+                                          left: `${strokeSelection.bounds.x * 100}%`,
+                                          top: `${strokeSelection.bounds.y * 100}%`,
+                                          width: `${strokeSelection.bounds.width * 100}%`,
+                                          height: `${strokeSelection.bounds.height * 100}%`,
+                                        }}
+                                      />
+                                    ) : null}
 
                                     <div className={`annotation-text-layer ${annotationMode === "text" ? "is-active" : ""}`}>
                                       <textarea
@@ -2530,16 +2859,6 @@ export default function App() {
                             </div>
                           ) : null}
 
-                          {currentCaptures.length > 0 ? (
-                            <div className="capture-strip">
-                              {currentCaptures.map((capture) => (
-                                <figure key={capture.id} className="capture-card">
-                                  <img src={capture.previewUrl} alt={`캡처 ${capture.pageIndex + 1}`} />
-                                  <figcaption>{capture.pageIndex + 1}페이지 캡처</figcaption>
-                                </figure>
-                              ))}
-                            </div>
-                          ) : null}
                         </div>
                       ) : (
                         <div className="pdf-empty">
@@ -2584,6 +2903,21 @@ export default function App() {
               </button>
               <button type="button" onClick={() => handleShareNote(contextMenu.id)}>
                 공유
+              </button>
+            </>
+          ) : contextMenu.type === "stroke-selection" ? (
+            <>
+              <button type="button" onClick={handleSelectionCopy}>
+                복사
+              </button>
+              <button type="button" onClick={handleSelectionDelete}>
+                삭제
+              </button>
+              <button type="button" onClick={handleSelectionMoveRequest}>
+                이동
+              </button>
+              <button type="button" onClick={handleSelectionStyleChange}>
+                스타일 변경
               </button>
             </>
           ) : (

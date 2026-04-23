@@ -1,7 +1,9 @@
 ﻿:root {
   font-family: "Segoe UI", "Malgun Gothic", "Noto Sans KR", sans-serif;
-  color: #181818;
-  background: #f7f7f8;
+  color: #1f2633;
+  background:
+    radial-gradient(circle at top left, rgba(207, 223, 255, 0.62), transparent 28%),
+    linear-gradient(180deg, #f8fafd 0%, #eef2f8 100%);
   line-height: 1.5;
   font-weight: 400;
   color-scheme: light;
@@ -24,7 +26,9 @@ body,
 
 body {
   min-width: 320px;
-  background: #f7f7f8;
+  background:
+    radial-gradient(circle at top left, rgba(207, 223, 255, 0.62), transparent 28%),
+    linear-gradient(180deg, #f8fafd 0%, #eef2f8 100%);
 }
 
 body.is-resizing {
@@ -76,9 +80,10 @@ button {
 .panel {
   min-height: 0;
   height: 100%;
-  border: 1px solid rgba(15, 23, 42, 0.06);
+  border: 1px solid #e3e9f2;
   border-radius: 24px;
-  background: #ffffff;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 18px 40px rgba(148, 163, 184, 0.14);
 }
 
 .sidebar,
@@ -90,7 +95,7 @@ button {
 }
 
 .samsung-sidebar {
-  background: #f3f3f4;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(246, 248, 252, 0.98));
 }
 
 .home-panel,
@@ -113,14 +118,15 @@ button {
 
 .note-study-shell {
   min-height: calc(100vh - 52px);
-  border-radius: 22px;
-  border: 1px solid rgba(15, 23, 42, 0.08);
-  background: #edf1f6;
+  border-radius: 28px;
+  border: 1px solid #dfe6f1;
+  background: linear-gradient(180deg, rgba(247, 249, 253, 0.98), rgba(239, 243, 248, 0.98));
   overflow: hidden;
-  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.08);
+  box-shadow: 0 24px 54px rgba(148, 163, 184, 0.16);
 }
 
 .note-workspace-grid {
+  height: calc(100vh - 52px);
   min-height: calc(100vh - 52px);
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
@@ -207,7 +213,7 @@ button {
 
 .note-toolbar-bar h2 {
   margin: 0;
-  color: #ffffff;
+  color: #223047;
   font-size: 1.02rem;
   line-height: 1.15;
 }
@@ -221,12 +227,13 @@ button {
 .note-toolbar-bar {
   min-height: 50px;
   padding: 8px 14px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
-  background: linear-gradient(180deg, #0f4fa0 0%, #0b4388 100%);
-  backdrop-filter: blur(8px);
+  border-bottom: 1px solid #e2e8f2;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(246, 248, 252, 0.94));
+  backdrop-filter: blur(10px);
   position: sticky;
   top: 0;
   z-index: 8;
+  overflow: visible;
 }
 
 .note-toolbar-bar {
@@ -239,22 +246,24 @@ button {
 }
 
 .tool-option-bar {
-  grid-column: 2;
+  grid-column: 1 / -1;
   display: flex;
   align-items: center;
   gap: 18px;
   flex-wrap: wrap;
-  justify-self: center;
+  justify-self: auto;
   width: min(100%, 520px);
-  margin-top: 8px;
+  margin-top: 0;
   padding: 12px 16px;
   border-radius: 18px;
-  border: 1px solid rgba(15, 23, 42, 0.08);
-  background: #ffffff;
-  box-shadow: 0 14px 28px rgba(15, 23, 42, 0.12);
-  position: sticky;
-  top: 64px;
-  z-index: 7;
+  border: 1px solid #e3e9f2;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 18px 32px rgba(148, 163, 184, 0.18);
+  position: absolute;
+  left: 50%;
+  top: calc(100% + 8px);
+  transform: translateX(-50%);
+  z-index: 14;
 }
 
 .tool-option-group {
@@ -278,19 +287,20 @@ button {
 }
 
 .tool-chip {
-  border: 1px solid rgba(15, 23, 42, 0.1);
+  border: 1px solid #e1e7f1;
   border-radius: 999px;
   padding: 7px 12px;
-  background: #f8fafc;
-  color: #0f4fa0;
+  background: #f7f9fd;
+  color: #5169d8;
   font-size: 0.76rem;
   font-weight: 700;
   min-height: 36px;
 }
 
 .tool-chip.is-active {
-  background: #0f4fa0;
+  background: #5f79ff;
   color: #ffffff;
+  border-color: #5f79ff;
 }
 
 .color-swatch {
@@ -303,7 +313,7 @@ button {
 
 .color-swatch.is-active {
   border-color: #ffffff;
-  box-shadow: 0 0 0 2px rgba(15, 79, 160, 0.4);
+  box-shadow: 0 0 0 2px rgba(95, 121, 255, 0.34);
 }
 
 .tool-width-control {
@@ -315,7 +325,7 @@ button {
 
 .tool-width-control input[type="range"] {
   flex: 1;
-  accent-color: #0f4fa0;
+  accent-color: #5f79ff;
   min-height: 28px;
 }
 
@@ -332,12 +342,15 @@ button {
 }
 
 .note-embedded-ai {
-  border-right: 1px solid rgba(15, 23, 42, 0.08);
-  background: rgba(255, 255, 255, 0.28);
-  backdrop-filter: blur(6px);
+  border-right: 1px solid #e2e8f2;
+  background: linear-gradient(180deg, rgba(246, 248, 252, 0.98), rgba(242, 245, 250, 0.98));
+  backdrop-filter: blur(8px);
+  overflow: hidden;
 }
 
 .note-ai-panel--embedded {
+  height: 100%;
+  min-height: 0;
   padding: 18px;
   background: transparent;
 }
@@ -350,78 +363,7 @@ button {
 .note-document-layout {
   height: 100%;
   min-height: 0;
-  display: grid;
-  grid-template-columns: 108px minmax(0, 1fr);
-  gap: 16px;
-}
-
-.page-thumbnail-rail {
-  min-height: 0;
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  gap: 12px;
-  padding: 10px 8px 10px 0;
-}
-
-.page-rail-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 4px;
-  color: #506070;
-  font-size: 0.76rem;
-}
-
-.page-thumbnail-list {
-  min-height: 0;
-  overflow: auto;
-  display: grid;
-  align-content: start;
-  gap: 10px;
-  padding-right: 4px;
-}
-
-.page-thumbnail-card {
-  border: 0;
-  background: transparent;
-  display: grid;
-  gap: 6px;
-  padding: 0;
-  text-align: left;
-}
-
-.page-thumbnail-number {
-  padding-left: 4px;
-  font-size: 0.76rem;
-  font-weight: 700;
-  color: #607084;
-}
-
-.page-thumbnail-sheet {
-  min-height: 116px;
-  padding: 10px 10px 12px;
-  border-radius: 14px;
-  border: 1px solid rgba(15, 23, 42, 0.08);
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(245, 248, 252, 0.96));
-  box-shadow: 0 10px 20px rgba(15, 23, 42, 0.06);
-  display: flex;
-  align-items: flex-start;
-}
-
-.page-thumbnail-sheet span {
-  font-size: 0.73rem;
-  line-height: 1.45;
-  color: #3d4c5e;
-}
-
-.page-thumbnail-card.is-active .page-thumbnail-number {
-  color: #0f4fa0;
-}
-
-.page-thumbnail-card.is-active .page-thumbnail-sheet {
-  border-color: rgba(15, 79, 160, 0.4);
-  box-shadow: 0 0 0 2px rgba(15, 79, 160, 0.14), 0 12px 24px rgba(15, 23, 42, 0.08);
+  display: block;
 }
 
 .note-content .annotation-workspace {
@@ -451,9 +393,9 @@ button {
   min-height: 32px;
   padding: 0 12px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.92);
-  border: 1px solid rgba(15, 23, 42, 0.08);
-  color: #425466;
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid #e4e9f2;
+  color: #556070;
   font-size: 0.8rem;
   font-weight: 700;
 }
@@ -496,7 +438,7 @@ button {
   padding: 0 12px;
   border: 0;
   border-radius: 10px;
-  background: #0f4fa0;
+  background: #5f79ff;
   color: #ffffff;
   font-weight: 700;
 }
@@ -544,32 +486,41 @@ button {
 }
 
 .note-ai-toggle {
-  min-height: 28px;
-  padding: 0 10px;
-  border-radius: 9px;
-  border: 1px solid rgba(255, 255, 255, 0.88);
-  background: #ffffff;
-  color: #0f4fa0;
+  min-width: 38px;
+  min-height: 38px;
+  padding: 0;
+  border-radius: 12px;
+  border: 1px solid #dfe6f3;
+  background: #f7f9fd;
+  color: #5169d8;
   font-size: 0.8rem;
   white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 6px 14px rgba(148, 163, 184, 0.12);
 }
 
 .note-ai-toggle.is-active {
-  background: #0f4fa0;
+  background: #5f79ff;
   color: #ffffff;
-  border-color: #ffffff;
+  border-color: #5f79ff;
 }
 
 .note-home-button {
-  min-width: 30px;
-  height: 30px;
+  min-width: 38px;
+  height: 38px;
   padding: 0;
-  border-radius: 9px;
-  border: 1px solid rgba(255, 255, 255, 0.88);
-  background: #ffffff !important;
-  color: #0f4fa0 !important;
+  border-radius: 12px;
+  border: 1px solid #dfe6f3;
+  background: #f7f9fd !important;
+  color: #5169d8 !important;
   font-size: 1rem;
   line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 6px 14px rgba(148, 163, 184, 0.12);
 }
 
 .note-home-button:hover,
@@ -579,6 +530,11 @@ button {
 
 .note-ai-toggle.is-active:hover {
   background: #0b4388;
+}
+
+.note-home-button svg,
+.note-ai-toggle svg {
+  display: block;
 }
 
 .eyebrow {
@@ -653,7 +609,7 @@ button {
 }
 
 .samsung-home-panel {
-  background: #ffffff;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(249, 251, 254, 0.98));
 }
 
 .samsung-home-header {
@@ -695,10 +651,10 @@ button {
   width: 100%;
   border: 0;
   border-radius: 20px;
-  background: #f1f1f3;
+  background: #f7f9fd;
   padding: 12px 16px;
-  color: #232329;
-  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.04);
+  color: #2a3345;
+  box-shadow: inset 0 0 0 1px #e3e9f2;
 }
 
 .folder-strip {
@@ -713,11 +669,11 @@ button {
   width: 118px;
   min-height: 90px;
   padding: 16px 12px 12px;
-  border: 1px solid #ececef;
-  border-radius: 18px;
-  background: #ffffff;
+  border: 1px solid #e5eaf3;
+  border-radius: 20px;
+  background: linear-gradient(180deg, #ffffff, #fbfcfe);
   text-align: left;
-  box-shadow: 0 8px 16px rgba(15, 23, 42, 0.08);
+  box-shadow: 0 14px 28px rgba(148, 163, 184, 0.16);
   transition: transform 0.18s ease, box-shadow 0.18s ease;
 }
 
@@ -737,7 +693,7 @@ button {
   width: 36px;
   height: 10px;
   border-radius: 0 0 10px 10px;
-  background: #8f8f91;
+  background: #d9e2ff;
 }
 
 .folder-card-meta {
@@ -800,17 +756,17 @@ button {
 .note-preview {
   position: relative;
   height: 254px;
-  border-radius: 18px;
-  background: #ffffff;
-  border: 1px solid #ececef;
+  border-radius: 22px;
+  background: linear-gradient(180deg, #ffffff, #fbfcfe);
+  border: 1px solid #e5eaf3;
   overflow: hidden;
-  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
+  box-shadow: 0 14px 28px rgba(148, 163, 184, 0.16);
   transition: transform 0.18s ease, box-shadow 0.18s ease;
 }
 
 .note-card:hover .note-preview {
   transform: translateY(-2px);
-  box-shadow: 0 14px 26px rgba(15, 23, 42, 0.12);
+  box-shadow: 0 18px 32px rgba(148, 163, 184, 0.22);
 }
 
 .note-preview::before {
@@ -890,9 +846,10 @@ button {
 .pdf-preview-wrap,
 .pdf-empty {
   padding: 20px;
-  border-radius: 22px;
-  border: 1px solid rgba(15, 23, 42, 0.08);
-  background: #ffffff;
+  border-radius: 24px;
+  border: 1px solid #e3e9f2;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 18px 32px rgba(148, 163, 184, 0.12);
 }
 
 .pdf-preview-wrap {
@@ -901,7 +858,10 @@ button {
 }
 
 .annotation-workspace {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 16px;
+  min-height: 0;
 }
 
 .annotation-actions {
@@ -915,9 +875,10 @@ button {
   border: 0;
   border-radius: 14px;
   padding: 10px 14px;
-  background: #ffffff;
-  color: #0f4fa0;
+  background: #f7f9fd;
+  color: #5169d8;
   font-weight: 700;
+  border: 1px solid #e1e7f1;
 }
 
 .annotation-actions--compact {
@@ -925,20 +886,26 @@ button {
 }
 
 .annotation-actions--compact button {
-  min-width: 34px;
-  height: 34px;
-  padding: 0 8px;
+  min-width: 38px;
+  height: 38px;
+  padding: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 10px;
+  border-radius: 12px;
   font-size: 0.76rem;
   line-height: 1;
+  box-shadow: 0 6px 14px rgba(148, 163, 184, 0.12);
+}
+
+.annotation-actions--compact button svg {
+  display: block;
 }
 
 .annotation-actions button.is-active {
-  background: #0f4fa0;
+  background: #5f79ff;
   color: #ffffff;
+  border-color: #5f79ff;
 }
 
 .annotation-board {
@@ -983,9 +950,9 @@ button {
   display: block;
   width: 100%;
   height: auto;
-  border-radius: 20px;
+  border-radius: 24px;
   background: #ffffff;
-  box-shadow: 0 20px 40px rgba(15, 23, 42, 0.12);
+  box-shadow: 0 24px 44px rgba(148, 163, 184, 0.22);
 }
 
 .pdf-render-error {
@@ -1077,6 +1044,16 @@ button {
   z-index: 3;
   pointer-events: none;
   overflow: hidden;
+}
+
+.stroke-selection-box {
+  position: absolute;
+  z-index: 4;
+  border: 2px dashed #5f79ff;
+  border-radius: 12px;
+  background: rgba(95, 121, 255, 0.08);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.8) inset;
+  pointer-events: none;
 }
 
 .annotation-text-layer.is-active {
@@ -1191,6 +1168,7 @@ button {
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr) auto;
   gap: 16px;
+  min-height: 0;
 }
 
 .note-ai-panel {
@@ -1213,12 +1191,12 @@ button {
 }
 
 .chat-bubble.assistant {
-  background: #f4f7fb;
-  border: 1px solid rgba(24, 35, 50, 0.08);
+  background: #ffffff;
+  border: 1px solid #e4e9f2;
 }
 
 .chat-bubble.user {
-  background: #1b2430;
+  background: #5f79ff;
   color: #ffffff;
 }
 
@@ -1231,8 +1209,51 @@ button {
   white-space: pre-wrap;
 }
 
+.chat-image-attachment {
+  margin: 10px 0 0;
+}
+
+.chat-image-attachment img {
+  display: block;
+  width: 100%;
+  max-height: 200px;
+  object-fit: cover;
+  border-radius: 14px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+}
+
 .chat-composer textarea {
   min-height: 96px;
+}
+
+.chat-queued-attachment {
+  padding: 10px;
+  border-radius: 16px;
+  border: 1px solid #e4e9f2;
+  background: #ffffff;
+}
+
+.chat-queued-meta {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.chat-queued-meta strong {
+  font-size: 0.84rem;
+  color: #334155;
+}
+
+.chat-queued-meta button {
+  border: 0;
+  border-radius: 10px;
+  background: #eef2ff;
+  color: #4f68d2;
+  min-height: 30px;
+  padding: 0 10px;
+  font-weight: 700;
 }
 
 .chat-composer button,
@@ -1450,11 +1471,6 @@ button {
     min-height: auto;
   }
 
-  .note-document-layout {
-    grid-template-columns: 88px minmax(0, 1fr);
-    gap: 12px;
-  }
-
   .workspace-topbar {
     grid-template-columns: 1fr;
     row-gap: 10px;
@@ -1475,9 +1491,8 @@ button {
   }
 
   .tool-option-bar {
-    top: 0;
-    position: relative;
-    margin-top: 0;
+    width: min(calc(100% - 24px), 520px);
+    top: calc(100% + 8px);
   }
 
   .annotation-scroll {
@@ -1515,34 +1530,18 @@ button {
     border-radius: 18px;
   }
 
-  .note-document-layout {
-    grid-template-columns: 1fr;
-  }
-
-  .page-thumbnail-rail {
-    grid-template-rows: auto auto;
-    padding: 0;
-  }
-
-  .page-thumbnail-list {
-    grid-auto-flow: column;
-    grid-auto-columns: 92px;
-    overflow-x: auto;
-    overflow-y: hidden;
-    padding-right: 0;
-    padding-bottom: 4px;
-  }
-
-  .page-thumbnail-sheet {
-    min-height: 104px;
-  }
-
   .note-toolbar-bar {
     padding: 10px 12px;
   }
 
   .note-toolbar-bar h2 {
     font-size: 0.95rem;
+  }
+
+  .tool-option-bar {
+    width: min(calc(100% - 16px), 520px);
+    padding: 10px 12px;
+    gap: 12px;
   }
 
   .annotation-actions--compact button,
