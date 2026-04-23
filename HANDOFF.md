@@ -71,6 +71,10 @@
 - `Ctrl + 스크롤` 시 PDF 영역만 확대/축소
 - 확대/축소는 CSS scale 기반
 - 기본 데모 PDF: `public/4_Maximum likelihood learning.pdf`
+- 실제 PDF 페이지 렌더링과 함께 페이지별 텍스트도 추출하도록 연결 시작
+- AI 요청 시 `current_page_text`, `nearby_pages_text`는 이제 실제 PDF 추출 텍스트를 우선 사용
+- 추출 텍스트가 없을 때만 기존 mock 페이지 텍스트로 fallback
+- 다만 현재 사용 중인 일부 자료는 텍스트형 PDF가 아니라 이미지형으로 보이며, 이 경우 텍스트 추출 품질이 낮거나 거의 비어 있을 수 있음
 - 예전에 좌측 페이지 썸네일 / 현재 페이지 표시 / 페이지 점프 / 저장 상태 UI를 넣었었음
 - 현재는 상세 화면에서 이 UI를 전부 제거/숨김 처리함
 - 관련 상태/함수 일부는 아직 코드에 남아 있을 수 있음
@@ -130,13 +134,41 @@
   - `이동`은 메뉴 클릭 후 같은 페이지에서 목적 위치를 한 번 클릭해 이동
 
 ### 10. AI Assistant
-- 현재 프론트에서는 mock 응답 사용
+- 현재 프론트 `handleAsk`는 실제 FastAPI `POST /api/chat` 호출로 연결됨
 - 질문 입력 가능
 - 채팅 말풍선 UI 구현됨
 - 캡처 이미지를 채팅 첨부처럼 붙여서 보낼 수 있음
-- `질문하기` 시 현재 페이지, 주변 페이지, 메모, 첨부 이미지 설명을 조합한 mock 답변 생성
+- OpenAI API 키가 없으면 백엔드에서 mock 응답 반환
+- API 키가 있으면 실제 OpenAI 호출
+- 현재 AI 입력 구조
+  - `question`
+  - `current_page_index`
+  - `total_page_count`
+  - `current_page_text`
+  - `nearby_pages_text`
+  - `nearby_pages`
+  - `user_note`
+  - `capture_analysis`
+- 주의
+  - `capture_analysis`는 아직 실제 이미지 자체가 아니라 이미지 설명 문자열
+  - 따라서 캡처 기반 질문 품질은 아직 제한적
+- 프롬프트 위치
+  - `backend/app/services/openai_service.py`
+- 프롬프트 상태
+  - 문맥 질문과 일반 질문을 모두 받도록 한 번 완화했음
+  - 페이지 질문은 백엔드에서 일부 규칙 기반으로 먼저 처리하도록 보강했음
+  - 하지만 아직 답변 톤/형식/정확도 면에서 추가 개선 필요
+  - 특히 프롬프트는 다음 작업에서 더 손봐야 함
 
-### 11. 저장 / 복원
+### 11. 현재 페이지 인식 상태
+- AI가 몇 페이지를 보고 있는지 잘못 이해하던 문제를 추적함
+- 원인 중 하나는 프론트가 질문 시점에 mock 페이지 수(`selectedNote.pages.length`) 기준으로 페이지 번호를 잘라 보내던 버그였음
+- 이 버그를 수정해, 질문 시점에는 실제 렌더링된 PDF 페이지 수(`renderedPageCount`) 기준으로 현재 페이지 번호를 계산해 전송하도록 변경
+- 또한 질문 버튼을 누르는 순간 DOM 기준으로 실제 보이는 페이지를 다시 계산해 AI 요청에 사용하도록 보강
+- 현재 체감상 페이지 번호 인식은 이전보다 좋아졌고, 사용자는 “몇 페이지 보고 있냐”를 꽤 정확히 맞는다고 느낀 상태
+- 다만 페이지 내용 요약 품질은 여전히 PDF가 이미지형인지 텍스트형인지에 크게 영향받음
+
+### 12. 저장 / 복원
 - 일부 편집 상태는 `localStorage` 저장
 - 현재 저장/복원 대상
   - 타이핑 메모
@@ -175,7 +207,10 @@
   - `POST /api/chat`
 - 상태
   - 파이썬 문법 검증 완료
-  - 프론트 `handleAsk`는 아직 백엔드 `/api/chat`로 연결하지 않음
+  - 프론트 `handleAsk`는 백엔드 `/api/chat`로 연결 완료
+  - `openai` / `httpx` 호환성 이슈 수정 완료
+  - 백엔드 에러 로그 개선 완료
+  - 페이지 번호 관련 질문은 백엔드에서 일부 규칙 기반 처리 추가
   - PostgreSQL 베이스/모델만 초안으로 만들었고, 실제 마이그레이션/테이블 생성은 아직 없음
 
 ## 현재 핵심 파일
@@ -224,6 +259,10 @@ uvicorn app.main:app --reload
 - 프론트 `npm.cmd run build` 정상 통과
 - `pdfjs-dist` 때문에 번들 크기 경고는 있으나 실패 아님
 - 백엔드 파이썬 파일 문법 체크 통과
+- 백엔드 `POST /api/chat`는 API 키 없을 때 200 + mock 응답 확인
+- API 키 있을 때 실제 OpenAI 호출 가능 상태까지 연결
+- API 키 있을 때 `openai` / `httpx` 충돌(`proxies`)과 `responses` API 문제는 수정함
+- 현재는 `chat.completions.create(...)` 방식 사용
 
 ## 지금 상태에서 특히 중요한 메모
 - 타이핑 줄 스냅 / Enter / Backspace 동작은 사용자가 원하는 규칙으로 꽤 세밀하게 맞춘 상태라 건드릴 때 주의
@@ -233,12 +272,20 @@ uvicorn app.main:app --reload
   - 관련 상태/함수 일부가 남아 있을 수 있음
 - 선택 stroke 편집은 들어갔지만 `스타일 변경` UI는 아직 prompt 기반이라 추후 개선 필요
 - 프론트는 여전히 `App.jsx`에 로직이 많이 몰려 있음
+- AI 답변 품질을 더 올리려면 두 축이 중요
+  - 실제 PDF 추출 텍스트 품질 개선
+  - `backend/app/services/openai_service.py` 프롬프트 추가 개선
+- 사용자가 보던 자료가 이미지형 PDF일 가능성이 높아서, AI 품질 한계가 텍스트 추출 부족에서 올 수 있음
+- 오늘 결론:
+  - 페이지 번호 인식은 이전보다 훨씬 나아짐
+  - 하지만 답변 내용 자체는 아직 프롬프트를 더 손봐야 함
 
 ## 다음 작업 우선순위
 
 ### 우선순위 높음
-- 프론트 `handleAsk`를 실제 FastAPI `/api/chat` 호출로 교체
-- 백엔드 `.env`에 OpenAI 키 넣고 실제 응답 테스트
+- 실제 PDF 추출 텍스트 품질 점검 및 정제
+- `backend/app/services/openai_service.py` 프롬프트 개선
+- 캡처 이미지를 실제 이미지 입력으로 보낼지 구조 결정
 - PostgreSQL 실제 연결
 - 노트/폴더/페이지 저장 구조 설계
 

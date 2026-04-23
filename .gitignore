@@ -5,6 +5,8 @@ __pycache__/
 *.py[cod]
 .venv/
 env/
+.env
+backend/.env
 
 # Local duplicates / misc
 /4_Maximum likelihood learning.pdf

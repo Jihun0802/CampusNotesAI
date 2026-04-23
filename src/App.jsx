@@ -18,6 +18,7 @@ import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
 const DEFAULT_PDF_PATH = "/4_Maximum%20likelihood%20learning.pdf";
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 const COLLAPSED_RAIL = 30;
 const NOTE_AI_MIN = 260;
 const NOTE_AI_COLLAPSE_THRESHOLD = 240;
@@ -612,6 +613,7 @@ export default function App() {
   const isApplyingHistoryRef = useRef(false);
   const saveStatusTimerRef = useRef(null);
   const [pdfPageSizes, setPdfPageSizes] = useState([]);
+  const [pdfPageTextsByNote, setPdfPageTextsByNote] = useState({});
   const [pdfRenderError, setPdfRenderError] = useState("");
   const [pdfPageCount, setPdfPageCount] = useState(0);
 
@@ -627,10 +629,66 @@ export default function App() {
   const pendingChatAttachment = pendingChatAttachmentByNote[selectedNote.id] ?? null;
   const selectedFolder = folders.find((folder) => folder.id === selectedFolderId) ?? null;
   const renderedPageCount = pdfPageCount || selectedNote.pages.length;
+  const extractedPdfPageTexts = pdfPageTextsByNote[selectedNote.id] ?? [];
 
   const nearbyPages = useMemo(() => {
     return selectedNote.pages.filter((_, index) => Math.abs(index - safeContentPageIndex) <= 1);
   }, [safeContentPageIndex, selectedNote.pages]);
+
+  const nearbyPageIndexes = useMemo(() => {
+    return selectedNote.pages
+      .map((_, index) => index)
+      .filter((index) => Math.abs(index - safeContentPageIndex) <= 1);
+  }, [safeContentPageIndex, selectedNote.pages]);
+
+  const currentPageTextForAI =
+    extractedPdfPageTexts[safeContentPageIndex]?.trim() || currentPage.text || "";
+
+  const nearbyPagesTextForAI = nearbyPageIndexes.map((pageIndex) => {
+    return extractedPdfPageTexts[pageIndex]?.trim() || selectedNote.pages[pageIndex]?.text || "";
+  });
+
+  const nearbyPagesForAI = nearbyPageIndexes.map((pageIndex) => ({
+    page_index: pageIndex + 1,
+    text: extractedPdfPageTexts[pageIndex]?.trim() || selectedNote.pages[pageIndex]?.text || "",
+  }));
+
+  const getVisiblePageIndex = () => {
+    const element = annotationScrollRef.current;
+    if (!element) {
+      return safeContentPageIndex;
+    }
+
+    const containerRect = element.getBoundingClientRect();
+    const containerCenter = containerRect.top + containerRect.height * 0.5;
+    const pageEntries = Object.entries(pageSurfaceRefs.current)
+      .map(([index, node]) => {
+        if (!node) {
+          return null;
+        }
+
+        const rect = node.getBoundingClientRect();
+        return {
+          index: Number(index),
+          rect,
+          distance: Math.abs(rect.top + rect.height * 0.5 - containerCenter),
+        };
+      })
+      .filter((entry) => entry && Number.isFinite(entry.distance));
+
+    if (pageEntries.length === 0) {
+      return safeContentPageIndex;
+    }
+
+    const containingEntry = pageEntries.find(
+      (entry) => entry.rect.top <= containerCenter && entry.rect.bottom >= containerCenter,
+    );
+    const nearest = pageEntries.reduce((best, entry) =>
+      entry.distance < best.distance ? entry : best,
+    );
+
+    return containingEntry?.index ?? nearest.index;
+  };
 
   const noteCounts = useMemo(
     () => ({
@@ -788,12 +846,17 @@ export default function App() {
       try {
         setPdfRenderError("");
         setPdfPageSizes([]);
+        setPdfPageTextsByNote((current) => ({
+          ...current,
+          [selectedNote.id]: [],
+        }));
         const loadingTask = getDocument(currentPdf.previewUrl);
         pdfDocument = await loadingTask.promise;
         const totalPages = pdfDocument.numPages;
         setPdfPageCount(totalPages);
         const containerWidth = Math.min(annotationStageRef.current.clientWidth - 80, 860);
         const nextSizes = [];
+        const nextPageTexts = [];
 
         for (let pageNumber = 1; pageNumber <= totalPages; pageNumber += 1) {
           const page = await pdfDocument.getPage(pageNumber);
@@ -801,6 +864,12 @@ export default function App() {
           const scale = containerWidth / baseViewport.width;
           const viewport = page.getViewport({ scale });
           const canvas = pdfCanvasRefs.current[pageNumber - 1];
+          const textContent = await page.getTextContent();
+          nextPageTexts[pageNumber - 1] = textContent.items
+            .map((item) => ("str" in item ? item.str : ""))
+            .join(" ")
+            .replace(/\s+/g, " ")
+            .trim();
 
           nextSizes[pageNumber - 1] = {
             width: viewport.width,
@@ -827,6 +896,10 @@ export default function App() {
 
         if (!cancelled) {
           setPdfPageSizes(nextSizes);
+          setPdfPageTextsByNote((current) => ({
+            ...current,
+            [selectedNote.id]: nextPageTexts,
+          }));
         }
       } catch (error) {
         if (cancelled || error?.name === "RenderingCancelledException") {
@@ -850,7 +923,7 @@ export default function App() {
       pdfDocument?.destroy?.();
       window.removeEventListener("resize", handleResize);
     };
-  }, [currentPdf, screen]);
+  }, [currentPdf, screen, selectedNote.id]);
 
   useEffect(() => {
     if (!dragging) {
@@ -977,32 +1050,7 @@ export default function App() {
       if (isDrawingRef.current) {
         return;
       }
-
-      const containerRect = element.getBoundingClientRect();
-      const containerCenter = containerRect.top + containerRect.height * 0.5;
-      const pageEntries = Object.entries(pageSurfaceRefs.current)
-        .map(([index, node]) => {
-          const rect = node.getBoundingClientRect();
-          return {
-          index: Number(index),
-          node,
-            rect,
-            distance: Math.abs(rect.top + rect.height * 0.5 - containerCenter),
-          };
-        })
-        .filter((entry) => Number.isFinite(entry.distance));
-
-      if (pageEntries.length === 0) {
-        return;
-      }
-
-      const containingEntry = pageEntries.find(
-        (entry) => entry.rect.top <= containerCenter && entry.rect.bottom >= containerCenter,
-      );
-      const nearest = pageEntries.reduce((best, entry) =>
-        entry.distance < best.distance ? entry : best,
-      );
-      const nextPageIndex = containingEntry?.index ?? nearest.index;
+      const nextPageIndex = getVisiblePageIndex();
 
       setPageByNote((current) =>
         current[selectedNote.id] === nextPageIndex
@@ -1029,7 +1077,7 @@ export default function App() {
       element.removeEventListener("scroll", handleScroll);
       element.removeEventListener("wheel", handleWheelZoom);
     };
-  }, [screen, selectedNote.id]);
+  }, [screen, selectedNote.id, safeContentPageIndex]);
 
   useEffect(() => {
     if (screen !== "note" || !annotationScrollRef.current) {
@@ -2237,12 +2285,41 @@ export default function App() {
     event.target.value = "";
   };
 
-  const handleAsk = () => {
+  const handleAsk = async () => {
     const trimmedQuestion = question.trim();
     const queuedAttachment = pendingChatAttachmentByNote[selectedNote.id] ?? null;
     if ((!trimmedQuestion && !queuedAttachment) || isThinking) {
       return;
     }
+
+    const visiblePageIndex = getVisiblePageIndex();
+    const nextPageIndex = clamp(visiblePageIndex, 0, Math.max(renderedPageCount - 1, 0));
+    const nextSafeContentPageIndex = Math.min(nextPageIndex, selectedNote.pages.length - 1);
+    const nextPageKey = `${selectedNote.id}:${nextPageIndex}`;
+    const nextCurrentPage = selectedNote.pages[nextSafeContentPageIndex] ?? currentPage;
+    const nextCurrentNote = notesByPageRef.current[nextPageKey] ?? "";
+    const nextCurrentUploads = uploadsByPage[nextPageKey] ?? [];
+    const nextNearbyPageIndexes = Array.from({ length: renderedPageCount }, (_, index) => index)
+      .filter((index) => Math.abs(index - nextPageIndex) <= 1);
+    const nextCurrentPageTextForAI =
+      extractedPdfPageTexts[nextPageIndex]?.trim() || nextCurrentPage.text || "";
+    const nextNearbyPagesTextForAI = nextNearbyPageIndexes.map((pageIndex) => {
+      const fallbackPage = selectedNote.pages[Math.min(pageIndex, selectedNote.pages.length - 1)];
+      return extractedPdfPageTexts[pageIndex]?.trim() || fallbackPage?.text || "";
+    });
+    const nextNearbyPagesForAI = nextNearbyPageIndexes.map((pageIndex) => ({
+      page_index: pageIndex + 1,
+      text:
+        extractedPdfPageTexts[pageIndex]?.trim()
+        || selectedNote.pages[Math.min(pageIndex, selectedNote.pages.length - 1)]?.text
+        || "",
+    }));
+
+    setPageByNote((current) =>
+      current[selectedNote.id] === nextPageIndex
+        ? current
+        : { ...current, [selectedNote.id]: nextPageIndex },
+    );
 
     const userMessage = {
       id: `user-${Date.now()}`,
@@ -2263,30 +2340,65 @@ export default function App() {
     setQuestion("");
     setIsThinking(true);
 
-    window.setTimeout(() => {
-      const latestImage = currentUploads[currentUploads.length - 1];
-      const answer = buildMockAnswer(
-        trimmedQuestion,
-        currentPage,
-        nearbyPages,
-        currentNote,
-        queuedAttachment
-          ? { analysis: queuedAttachment.analysis, previewUrl: queuedAttachment.previewUrl }
-          : latestImage,
-      );
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/chat`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          question: trimmedQuestion,
+          current_page_index: nextPageIndex + 1,
+          total_page_count: renderedPageCount,
+          current_page_text: nextCurrentPageTextForAI,
+          nearby_pages_text: nextNearbyPagesTextForAI,
+          nearby_pages: nextNearbyPagesForAI,
+          user_note: nextCurrentNote,
+          capture_analysis: queuedAttachment?.analysis ?? "",
+        }),
+      });
 
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const data = await response.json();
       const assistantMessage = {
         id: `assistant-${Date.now()}`,
         role: "assistant",
-        text: answer,
+        text: data.answer,
       };
 
       setChatByNote((current) => ({
         ...current,
         [selectedNote.id]: [...(current[selectedNote.id] ?? []), assistantMessage],
       }));
+    } catch (error) {
+      const latestImage = currentUploads[currentUploads.length - 1];
+      const answer = buildMockAnswer(
+        trimmedQuestion,
+        nextCurrentPage,
+        selectedNote.pages.filter((_, index) => Math.abs(index - nextSafeContentPageIndex) <= 1),
+        nextCurrentNote,
+        queuedAttachment
+          ? { analysis: queuedAttachment.analysis, previewUrl: queuedAttachment.previewUrl }
+          : nextCurrentUploads[nextCurrentUploads.length - 1] ?? latestImage,
+      );
+
+      const assistantMessage = {
+        id: `assistant-${Date.now()}`,
+        role: "assistant",
+        text: `${answer}\n\n(백엔드 연결 실패로 mock 응답을 대신 표시했습니다.)`,
+      };
+
+      setChatByNote((current) => ({
+        ...current,
+        [selectedNote.id]: [...(current[selectedNote.id] ?? []), assistantMessage],
+      }));
+      console.error("Failed to call /api/chat:", error);
+    } finally {
       setIsThinking(false);
-    }, 700);
+    }
   };
 
   const handleKeyDown = (event) => {
