@@ -4,8 +4,8 @@
 - 프로젝트명: `CampusNotesAI`
 - 목적: 대학생 대상 AI 기반 노트 앱 프로토타입
 - 현재 프론트 스택: `Vite + React + pdfjs-dist`
-- 현재 백엔드 스택: `FastAPI + OpenAI SDK + SQLAlchemy + PostgreSQL 준비`
-- 현재 상태: 프론트는 고도화된 데모 수준, 백엔드는 스캐폴드 생성 완료
+- 현재 백엔드 스택: `FastAPI + OpenAI SDK + SQLAlchemy + PostgreSQL`
+- 현재 상태: 프론트는 고도화된 데모 수준, 백엔드는 로컬 PostgreSQL 연결 및 기본 CRUD API까지 연결 완료
 
 ## 현재 폴더 구조
 - 프론트 루트: 프로젝트 루트 자체
@@ -31,7 +31,8 @@
   - `폴더`
 - `폴더`가 기본 메인 화면
 - 폴더 카드와 노트 카드가 보이고, 폴더 없는 노트도 별도 표시
-- 폴더/노트 데이터는 아직 mock 데이터 기반
+- 폴더/노트 데이터는 이제 백엔드 PostgreSQL API에서 불러오도록 1차 연결됨
+- 다만 `src/App.jsx` 내부에 초기 mock 상수와 fallback 로직이 일부 남아 있음
 
 ### 2. 메인 화면 기능
 - `노트 작성`
@@ -179,13 +180,20 @@
 - 다만 페이지 내용 요약 품질은 여전히 PDF가 이미지형인지 텍스트형인지에 크게 영향받음
 
 ### 12. 저장 / 복원
-- 일부 편집 상태는 `localStorage` 저장
-- 현재 저장/복원 대상
-  - 타이핑 메모
-  - 손글씨 stroke
+- 현재 저장 구조는 혼합 상태
+- PostgreSQL에 저장되는 것
+  - 폴더
+  - 노트
+  - 페이지별 타이핑 메모
+  - 페이지별 손글씨 데이터(JSON 문자열)
+  - AI 채팅 세션
+  - AI 채팅 메시지
+- 아직 `localStorage`에 남아 있는 것
   - redo stroke 상태
   - 노트별 현재 페이지 인덱스
-- 노트/폴더 mock 데이터 자체는 아직 코드 상수 기반
+- 페이지별 업로드 이미지는 현재 메타데이터 일부만 저장됨
+  - 브라우저 `blob:` URL 기반 파일 자체 업로드/복원은 아직 미구현
+- 노트/폴더/채팅은 새로고침 후에도 DB에서 다시 불러오도록 1차 연결됨
 
 ## 현재 프론트 의존성
 - `react`
@@ -193,7 +201,7 @@
 - `pdfjs-dist`
 - `lucide-react`
 
-## 백엔드 스캐폴드 상태
+## 백엔드 상태
 - `backend/` 디렉터리 생성 완료
 - 현재 백엔드 스택
   - `FastAPI`
@@ -205,23 +213,35 @@
 - 주요 파일
   - `backend/app/main.py`
   - `backend/app/routes/chat.py`
+  - `backend/app/routes/storage.py`
   - `backend/app/services/openai_service.py`
   - `backend/app/core/config.py`
   - `backend/app/db/database.py`
   - `backend/app/db/models.py`
+  - `backend/app/schemas/storage.py`
   - `backend/requirements.txt`
   - `backend/.env.example`
   - `backend/README.md`
 - 현재 API
   - `GET /health`
+  - `GET /health/db`
   - `POST /api/chat`
+  - `GET/POST/PATCH/DELETE /api/folders`
+  - `GET/POST/PATCH/DELETE /api/notes`
+  - `GET/POST/PUT/DELETE /api/notes/{note_id}/pages...`
+  - `GET/POST/PATCH/DELETE /api/notes/{note_id}/chat-sessions...`
+  - `GET/POST /api/chat-sessions/{session_id}/messages`
 - 상태
   - 파이썬 문법 검증 완료
   - 프론트 `handleAsk`는 백엔드 `/api/chat`로 연결 완료
   - `openai` / `httpx` 호환성 이슈 수정 완료
   - 백엔드 에러 로그 개선 완료
   - 페이지 번호 관련 질문은 백엔드에서 일부 규칙 기반 처리 추가
-  - PostgreSQL 베이스/모델만 초안으로 만들었고, 실제 마이그레이션/테이블 생성은 아직 없음
+  - 로컬 PostgreSQL 연결 완료
+  - 앱 시작 시 DB ping 및 기본 테이블 초기화 가능
+  - `Folder`, `Note`, `NotePage`, `ChatSession`, `ChatMessage` 모델 추가 완료
+  - 기존 로컬 테이블을 새 구조에 맞추기 위한 최소 schema sync 로직 추가됨
+  - Alembic 같은 정식 마이그레이션은 아직 없음
 
 ## 현재 핵심 파일
 - `src/App.jsx`
@@ -243,8 +263,14 @@
   - FastAPI 앱 시작점
 - `backend/app/routes/chat.py`
   - AI 채팅 API 엔드포인트
+- `backend/app/routes/storage.py`
+  - 폴더/노트/페이지/채팅 CRUD API
 - `backend/app/services/openai_service.py`
   - OpenAI 호출 서비스
+- `backend/app/schemas/storage.py`
+  - 저장용 API request/response 스키마
+- `backend/app/db/models.py`
+  - `Folder`, `Note`, `NotePage`, `ChatSession`, `ChatMessage` SQLAlchemy 모델
 - `public/4_Maximum likelihood learning.pdf`
   - 기본 데모 PDF
 
@@ -273,6 +299,10 @@ uvicorn app.main:app --reload
 - API 키 있을 때 실제 OpenAI 호출 가능 상태까지 연결
 - API 키 있을 때 `openai` / `httpx` 충돌(`proxies`)과 `responses` API 문제는 수정함
 - 현재는 `chat.completions.create(...)` 방식 사용
+- 로컬 PostgreSQL 연결 확인 완료
+- `GET /health/db` 정상 응답 확인 완료
+- 폴더/노트/페이지/채팅 세션/메시지 CRUD 생성 흐름 검증 완료
+- 프론트 `npm.cmd run build` 다시 정상 통과
 
 ## 지금 상태에서 특히 중요한 메모
 - 노트 상세 화면의 PDF/AI 패널 높이와 하단 여백은 일부 조정했지만, 사용자가 아직 100% 만족하지는 않아 추후 더 손보고 싶어함
@@ -287,9 +317,15 @@ uvicorn app.main:app --reload
   - 실제 PDF 추출 텍스트 품질 개선
   - `backend/app/services/openai_service.py` 프롬프트 추가 개선
 - 사용자가 보던 자료가 이미지형 PDF일 가능성이 높아서, AI 품질 한계가 텍스트 추출 부족에서 올 수 있음
+- 현재 프론트는 DB API에 1차 연결됐지만, 상태/저장 로직이 여전히 `App.jsx` 한 파일에 많이 몰려 있음
+- 손글씨 데이터는 현재 페이지 단위 JSON 문자열로 저장
+- 업로드 이미지 저장은 아직 파일 업로드 API가 없어 완전한 복원까지는 안 됨
+  - 현재는 일부 메타데이터만 저장
+- PDF 파일 자체 업로드/영속 저장 구조는 아직 없음
 - 오늘 결론:
-  - 페이지 번호 인식은 이전보다 훨씬 나아짐
-  - 하지만 답변 내용 자체는 아직 프롬프트를 더 손봐야 함
+  - 로컬 PostgreSQL 연결 및 기본 CRUD/API 배선은 완료됨
+  - 프론트에서 폴더/노트/페이지/채팅 저장이 DB로 1차 연결됨
+  - 하지만 이미지/PDF 파일 영속 저장과 프론트 구조 정리는 아직 남아 있음
 
 ## 다음 작업 우선순위
 
@@ -297,10 +333,11 @@ uvicorn app.main:app --reload
 - 실제 PDF 추출 텍스트 품질 점검 및 정제
 - `backend/app/services/openai_service.py` 프롬프트 개선
 - 캡처 이미지를 실제 이미지 입력으로 보낼지 구조 결정
-- PostgreSQL 실제 연결
-- 노트/폴더/페이지 저장 구조 설계
+- 업로드 이미지/PDF 파일 저장 구조 설계
+- 프론트의 DB 저장 흐름 안정화 및 리팩터링
 
 ### 우선순위 중간
+- Alembic 마이그레이션 도입 여부 결정
 - 선택 stroke 컨텍스트 메뉴 UX 개선
   - 특히 `스타일 변경`을 prompt에서 패널/툴바 UI로 교체
 - AI Assistant mock 흐름을 실제 응답 흐름에 맞게 보정
@@ -315,4 +352,6 @@ uvicorn app.main:app --reload
 - 파일 인코딩은 `UTF-8` 유지
 - 실제 수정은 프론트는 `src`, 백엔드는 `backend/app` 기준
 - `dist`는 빌드 결과물이라 직접 수정 대상 아님
-- 현재 저장은 `localStorage` 기반이라 이 브라우저 / 이 기기에서만 유지
+- `backend/.env` 는 절대 커밋/노출 금지
+- 현재 저장은 `localStorage` + PostgreSQL 혼합 상태
+- 기존 로컬 DB에 대해선 `create_all()`만으로 컬럼 변경이 완전 관리되지 않으므로, 지금은 `database.py`의 최소 schema sync 에 의존 중

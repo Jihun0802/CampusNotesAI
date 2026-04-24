@@ -10,6 +10,7 @@ import {
   RotateCcw,
   ScanSearch,
   Sparkles,
+  Star,
   Type,
 } from "lucide-react";
 import { GlobalWorkerOptions, getDocument } from "pdfjs-dist";
@@ -227,6 +228,23 @@ const INITIAL_MESSAGES = [
 ];
 
 const WELCOME_MESSAGE_ID = "welcome-1";
+const DEFAULT_NOTE_PAGE = {
+  title: "새 노트",
+  text: "",
+  bullets: ["아직 저장된 페이지 내용이 없습니다."],
+};
+const EMPTY_NOTE = {
+  id: "",
+  name: "노트를 선택하세요",
+  code: "",
+  instructor: "직접 작성",
+  accent: "accent-blue",
+  folderId: null,
+  favorite: false,
+  deleted: false,
+  updatedAt: "",
+  pages: [DEFAULT_NOTE_PAGE],
+};
 
 const PEN_COLORS = [
   { id: "blue", label: "파랑", value: "#1d4ed8" },
@@ -244,6 +262,65 @@ const NAV_ITEMS = [
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
+}
+
+async function fetchJson(url, options) {
+  const response = await fetch(url, options);
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  if (response.status === 204) {
+    return null;
+  }
+  return response.json();
+}
+
+function makeFrontendPage(pageIndex, typedText = "") {
+  const text = typedText?.trim() ?? "";
+  const bullets = text
+    ? text
+        .split(/\n+/)
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .slice(0, 3)
+    : [];
+
+  return {
+    title: `${pageIndex + 1}페이지`,
+    text,
+    bullets: bullets.length > 0 ? bullets : DEFAULT_NOTE_PAGE.bullets,
+  };
+}
+
+function mapFolderFromApi(folder) {
+  return {
+    id: String(folder.id),
+    name: folder.name,
+    deleted: folder.deleted,
+  };
+}
+
+function mapNoteFromApi(note, existingNote) {
+  const pages = note.pages?.length
+    ? [...note.pages]
+        .sort((a, b) => a.page_index - b.page_index)
+        .map((page) => makeFrontendPage(page.page_index - 1, page.typed_text))
+    : existingNote?.pages?.length
+      ? existingNote.pages
+      : [DEFAULT_NOTE_PAGE];
+
+  return {
+    id: String(note.id),
+    name: note.title,
+    code: note.code ?? "NEW",
+    instructor: existingNote?.instructor ?? "직접 작성",
+    accent: existingNote?.accent ?? "accent-blue",
+    folderId: note.folder_id == null ? null : String(note.folder_id),
+    favorite: Boolean(note.favorite),
+    deleted: Boolean(note.deleted),
+    updatedAt: note.updated_at ?? note.created_at ?? "저장됨",
+    pages,
+  };
 }
 
 function buildMockAnswer(question, currentPage, nearbyPages, noteText, latestImage) {
@@ -550,41 +627,28 @@ function mapPenWidthToStrokeWidth(penWidth) {
 }
 
 export default function App() {
-  const [folders, setFolders] = useState(INITIAL_FOLDERS);
-  const [notes, setNotes] = useState(INITIAL_NOTES);
+  const [folders, setFolders] = useState([]);
+  const [notes, setNotes] = useState([]);
   const [screen, setScreen] = useState("home");
   const [selectedNav, setSelectedNav] = useState("folders");
   const [selectedFolderId, setSelectedFolderId] = useState(null);
-  const [selectedNoteId, setSelectedNoteId] = useState("ml");
+  const [selectedNoteId, setSelectedNoteId] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
-  const [pageByNote, setPageByNote] = useState(
-    INITIAL_NOTES.reduce((acc, note) => {
-      acc[note.id] = 0;
-      return acc;
-    }, {}),
-  );
+  const [pageByNote, setPageByNote] = useState({});
   const [notesByPage, setNotesByPage] = useState({});
-  const [chatByNote, setChatByNote] = useState(
-    INITIAL_NOTES.reduce((acc, note) => {
-      acc[note.id] = INITIAL_MESSAGES;
-      return acc;
-    }, {}),
-  );
+  const [chatByNote, setChatByNote] = useState({});
   const [uploadsByPage, setUploadsByPage] = useState({});
   const [strokesByPage, setStrokesByPage] = useState({});
   const [redoStrokesByPage, setRedoStrokesByPage] = useState({});
   const [capturesByPage, setCapturesByPage] = useState({});
   const [pendingChatAttachmentByNote, setPendingChatAttachmentByNote] = useState({});
-  const [pdfByNote, setPdfByNote] = useState({
-    ml: {
-      name: "4_Maximum likelihood learning.pdf",
-      previewUrl: DEFAULT_PDF_PATH,
-      isBundled: true,
-    },
-  });
+  const [pdfByNote, setPdfByNote] = useState({});
   const [question, setQuestion] = useState("");
   const [isThinking, setIsThinking] = useState(false);
   const [saveStatus, setSaveStatus] = useState("saved");
+  const [isStorageLoading, setIsStorageLoading] = useState(true);
+  const [storageError, setStorageError] = useState("");
+  const [chatSessionByNote, setChatSessionByNote] = useState({});
   const [pageJumpInput, setPageJumpInput] = useState("1");
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
@@ -625,12 +689,15 @@ export default function App() {
   const redoHistoryRef = useRef([]);
   const isApplyingHistoryRef = useRef(false);
   const saveStatusTimerRef = useRef(null);
+  const hydratedNotesRef = useRef(new Set());
+  const isHydratingRemoteRef = useRef(false);
+  const pageSaveTimerRef = useRef(null);
   const [pdfPageSizes, setPdfPageSizes] = useState([]);
   const [pdfPageTextsByNote, setPdfPageTextsByNote] = useState({});
   const [pdfRenderError, setPdfRenderError] = useState("");
   const [pdfPageCount, setPdfPageCount] = useState(0);
 
-  const selectedNote = notes.find((note) => note.id === selectedNoteId) ?? notes[0] ?? INITIAL_NOTES[0];
+  const selectedNote = notes.find((note) => note.id === selectedNoteId) ?? notes[0] ?? EMPTY_NOTE;
   const currentPageIndex = pageByNote[selectedNote.id] ?? 0;
   const safeContentPageIndex = Math.min(currentPageIndex, selectedNote.pages.length - 1);
   const currentPage = selectedNote.pages[safeContentPageIndex];
@@ -643,6 +710,7 @@ export default function App() {
   const selectedFolder = folders.find((folder) => folder.id === selectedFolderId) ?? null;
   const renderedPageCount = pdfPageCount || selectedNote.pages.length;
   const extractedPdfPageTexts = pdfPageTextsByNote[selectedNote.id] ?? [];
+  const hasSelectedNote = Boolean(selectedNote.id);
 
   const nearbyPages = useMemo(() => {
     return selectedNote.pages.filter((_, index) => Math.abs(index - safeContentPageIndex) <= 1);
@@ -754,6 +822,129 @@ export default function App() {
     });
   }, [filteredNotes, folders, notes, searchQuery, selectedFolder, selectedNav, ungroupedNotes]);
 
+  const hydrateNoteDetail = async (noteId) => {
+    if (!noteId) {
+      return;
+    }
+
+    isHydratingRemoteRef.current = true;
+    try {
+      const detail = await fetchJson(`${API_BASE_URL}/api/notes/${noteId}`);
+      const normalizedNoteId = String(detail.id);
+
+      setNotes((current) =>
+        current.map((note) =>
+          note.id === normalizedNoteId ? mapNoteFromApi(detail, note) : note,
+        ),
+      );
+
+      const nextNotesByPage = {};
+      const nextStrokesByPage = {};
+      const nextUploadsByPage = {};
+
+      (detail.pages ?? []).forEach((page) => {
+        const pageIndex = page.page_index - 1;
+        const notePageKey = `${normalizedNoteId}:${pageIndex}`;
+        nextNotesByPage[notePageKey] = page.typed_text ?? "";
+
+        try {
+          nextStrokesByPage[notePageKey] = page.handwriting_data ? JSON.parse(page.handwriting_data) : [];
+        } catch {
+          nextStrokesByPage[notePageKey] = [];
+        }
+
+        try {
+          const savedUploads = page.image_data ? JSON.parse(page.image_data) : [];
+          nextUploadsByPage[notePageKey] = savedUploads.filter(
+            (upload) => typeof upload?.previewUrl === "string" && !upload.previewUrl.startsWith("blob:"),
+          );
+        } catch {
+          nextUploadsByPage[notePageKey] = [];
+        }
+      });
+
+      notesByPageRef.current = {
+        ...notesByPageRef.current,
+        ...nextNotesByPage,
+      };
+      strokesByPageRef.current = {
+        ...strokesByPageRef.current,
+        ...nextStrokesByPage,
+      };
+      setNotesByPage(notesByPageRef.current);
+      setStrokesByPage(strokesByPageRef.current);
+      setUploadsByPage((current) => ({
+        ...current,
+        ...nextUploadsByPage,
+      }));
+
+      const existingSessions = detail.chat_sessions ?? [];
+      let activeSession = existingSessions[0] ?? null;
+
+      if (!activeSession) {
+        activeSession = await fetchJson(`${API_BASE_URL}/api/notes/${noteId}/chat-sessions`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title: "새 AI 대화" }),
+        });
+      }
+
+      setChatSessionByNote((current) => ({
+        ...current,
+        [normalizedNoteId]: activeSession.id,
+      }));
+
+      const sessionDetail = await fetchJson(`${API_BASE_URL}/api/chat-sessions/${activeSession.id}`);
+      const sessionMessages = (sessionDetail.messages ?? []).map((message) => ({
+        id: `db-message-${message.id}`,
+        role: message.role,
+        text: message.content,
+      }));
+
+      setChatByNote((current) => ({
+        ...current,
+        [normalizedNoteId]: sessionMessages.length > 0 ? sessionMessages : INITIAL_MESSAGES,
+      }));
+
+      hydratedNotesRef.current.add(normalizedNoteId);
+    } finally {
+      isHydratingRemoteRef.current = false;
+    }
+  };
+
+  const loadStorageData = async () => {
+    setIsStorageLoading(true);
+    setStorageError("");
+
+    try {
+      const [folderData, noteData] = await Promise.all([
+        fetchJson(`${API_BASE_URL}/api/folders`),
+        fetchJson(`${API_BASE_URL}/api/notes`),
+      ]);
+
+      const nextFolders = folderData.map(mapFolderFromApi);
+      const nextNotes = noteData.map((note) => mapNoteFromApi(note));
+
+      setFolders(nextFolders);
+      setNotes(nextNotes);
+      setPageByNote((current) => {
+        const nextPageByNote = { ...current };
+        nextNotes.forEach((note) => {
+          if (!(note.id in nextPageByNote)) {
+            nextPageByNote[note.id] = 0;
+          }
+        });
+        return nextPageByNote;
+      });
+      setSelectedNoteId((current) => current ?? nextNotes.find((note) => !note.deleted)?.id ?? nextNotes[0]?.id ?? null);
+    } catch (error) {
+      console.error("Failed to load storage data:", error);
+      setStorageError("DB에서 노트와 폴더를 불러오지 못했습니다.");
+    } finally {
+      setIsStorageLoading(false);
+    }
+  };
+
   useEffect(() => {
     return () => {
       uploadUrlsRef.current.forEach((previewUrl) => URL.revokeObjectURL(previewUrl));
@@ -787,17 +978,44 @@ export default function App() {
   }, [folders, selectedFolderId]);
 
   useEffect(() => {
-    try {
-      const savedNotes = localStorage.getItem("campus-notes-text");
-      const savedStrokes = localStorage.getItem("campus-notes-strokes");
-      const savedPages = localStorage.getItem("campus-notes-page-index");
+    if (!selectedNoteId || hydratedNotesRef.current.has(selectedNoteId)) {
+      return;
+    }
 
-      if (savedNotes) {
-        setNotesByPage(JSON.parse(savedNotes));
+    hydrateNoteDetail(selectedNoteId).catch((error) => {
+      console.error("Failed to hydrate note detail:", error);
+      setStorageError("노트 상세 데이터를 불러오지 못했습니다.");
+    });
+  }, [selectedNoteId]);
+
+  useEffect(() => {
+    if (!selectedNote.id) {
+      return;
+    }
+
+    setPdfByNote((current) => {
+      if (current[selectedNote.id]) {
+        return current;
       }
-      if (savedStrokes) {
-        setStrokesByPage(JSON.parse(savedStrokes));
-      }
+
+      return {
+        ...current,
+        [selectedNote.id]: {
+          name: "4_Maximum likelihood learning.pdf",
+          previewUrl: DEFAULT_PDF_PATH,
+          isBundled: true,
+        },
+      };
+    });
+  }, [selectedNote.id]);
+
+  useEffect(() => {
+    loadStorageData();
+  }, []);
+
+  useEffect(() => {
+    try {
+      const savedPages = localStorage.getItem("campus-notes-page-index");
       const savedRedoStrokes = localStorage.getItem("campus-notes-redo-strokes");
       if (savedRedoStrokes) {
         setRedoStrokesByPage(JSON.parse(savedRedoStrokes));
@@ -814,12 +1032,10 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    localStorage.setItem("campus-notes-text", JSON.stringify(notesByPage));
     notesByPageRef.current = notesByPage;
   }, [notesByPage]);
 
   useEffect(() => {
-    localStorage.setItem("campus-notes-strokes", JSON.stringify(strokesByPage));
     strokesByPageRef.current = strokesByPage;
   }, [strokesByPage]);
 
@@ -860,6 +1076,71 @@ export default function App() {
       saveStatusTimerRef.current = null;
     }, 280);
   }, [notesByPage, pageByNote, redoStrokesByPage, strokesByPage]);
+
+  useEffect(() => {
+    if (isHydratingRemoteRef.current || !selectedNote.id) {
+      return undefined;
+    }
+
+    if (pageSaveTimerRef.current) {
+      window.clearTimeout(pageSaveTimerRef.current);
+    }
+
+    pageSaveTimerRef.current = window.setTimeout(async () => {
+      const noteId = selectedNote.id;
+      const noteKeys = new Set([
+        ...Object.keys(notesByPageRef.current),
+        ...Object.keys(strokesByPageRef.current),
+        ...Object.keys(uploadsByPage),
+      ]);
+
+      const pagesToPersist = [...noteKeys]
+        .filter((key) => key.startsWith(`${noteId}:`))
+        .map((key) => Number(key.split(":")[1]))
+        .filter((value) => Number.isFinite(value));
+
+      if (pagesToPersist.length === 0) {
+        return;
+      }
+
+      try {
+        await Promise.all(
+          [...new Set(pagesToPersist)].map((pageIndex) =>
+            fetchJson(`${API_BASE_URL}/api/notes/${noteId}/pages/${pageIndex + 1}`, {
+              method: "PUT",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                typed_text: notesByPageRef.current[`${noteId}:${pageIndex}`] ?? "",
+                handwriting_data: JSON.stringify(strokesByPageRef.current[`${noteId}:${pageIndex}`] ?? []),
+                image_data: JSON.stringify(
+                  (uploadsByPage[`${noteId}:${pageIndex}`] ?? []).map((upload) => ({
+                    id: upload.id,
+                    name: upload.name,
+                    analysis: upload.analysis,
+                    previewUrl:
+                      typeof upload.previewUrl === "string" && !upload.previewUrl.startsWith("blob:")
+                        ? upload.previewUrl
+                        : "",
+                  })),
+                ),
+              }),
+            }),
+          ),
+        );
+      } catch (error) {
+        console.error("Failed to persist note pages:", error);
+        setStorageError("페이지 메모를 DB에 저장하지 못했습니다.");
+      }
+    }, 500);
+
+    return () => {
+      if (pageSaveTimerRef.current) {
+        window.clearTimeout(pageSaveTimerRef.current);
+      }
+    };
+  }, [notesByPage, selectedNote.id, strokesByPage, uploadsByPage]);
 
   useEffect(() => {
     if (screen !== "note" || !currentPdf || !annotationStageRef.current) {
@@ -1405,59 +1686,82 @@ export default function App() {
     });
   };
 
-  const handleCreateNote = () => {
+  const handleCreateNote = async () => {
     const name = window.prompt("새 노트 이름을 입력하세요.");
     if (!name?.trim()) {
       return;
     }
 
-    const newNoteId = `note-${Date.now()}`;
-    const folderId = selectedNav === "folders" ? selectedFolderId : null;
-    const newNote = {
-      id: newNoteId,
-      name: name.trim(),
-      code: "NEW",
-      instructor: "직접 작성",
-      accent: "accent-blue",
-      folderId,
-      favorite: false,
-      deleted: false,
-      updatedAt: "방금 생성됨",
-      pages: [
-        {
-          title: "새 노트",
-          text: "새로 만든 노트입니다. PDF를 연결하고 메모를 작성해보세요.",
-          bullets: [
-            "상단에서 PDF를 업로드할 수 있습니다.",
-            "손글씨와 타이핑 메모를 함께 사용할 수 있습니다.",
-            "AI Assistant는 현재 페이지 문맥을 기준으로 응답합니다.",
-          ],
+    try {
+      const folderId = selectedNav === "folders" ? selectedFolderId : null;
+      const createdNote = await fetchJson(`${API_BASE_URL}/api/notes`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
         },
-      ],
-    };
+        body: JSON.stringify({
+          title: name.trim(),
+          code: "NEW",
+          folder_id: folderId ? Number(folderId) : null,
+          favorite: false,
+        }),
+      });
 
-    setNotes((current) => [newNote, ...current]);
-    setPageByNote((current) => ({ ...current, [newNoteId]: 0 }));
-    setChatByNote((current) => ({ ...current, [newNoteId]: INITIAL_MESSAGES }));
-    setSelectedNoteId(newNoteId);
-    setScreen("note");
+      await fetchJson(`${API_BASE_URL}/api/notes/${createdNote.id}/pages`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          page_index: 1,
+          typed_text: "",
+          handwriting_data: "[]",
+          image_data: "[]",
+        }),
+      });
+
+      const newNote = mapNoteFromApi(
+        {
+          ...createdNote,
+          pages: [{ page_index: 1, typed_text: "" }],
+        },
+      );
+
+      setNotes((current) => [newNote, ...current]);
+      setPageByNote((current) => ({ ...current, [newNote.id]: 0 }));
+      setChatByNote((current) => ({ ...current, [newNote.id]: INITIAL_MESSAGES }));
+      setSelectedNoteId(newNote.id);
+      setScreen("note");
+      hydratedNotesRef.current.delete(newNote.id);
+    } catch (error) {
+      console.error("Failed to create note:", error);
+      window.alert("노트를 DB에 저장하지 못했습니다.");
+    }
   };
 
-  const handleCreateFolder = () => {
+  const handleCreateFolder = async () => {
     const name = window.prompt("새 폴더 이름을 입력하세요.");
     if (!name?.trim()) {
       return;
     }
 
-    const newFolder = {
-      id: `folder-${Date.now()}`,
-      name: name.trim(),
-      deleted: false,
-    };
+    try {
+      const createdFolder = await fetchJson(`${API_BASE_URL}/api/folders`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ name: name.trim() }),
+      });
 
-    setFolders((current) => [newFolder, ...current]);
-    setSelectedNav("folders");
-    setSelectedFolderId(newFolder.id);
+      const newFolder = mapFolderFromApi(createdFolder);
+      setFolders((current) => [newFolder, ...current]);
+      setSelectedNav("folders");
+      setSelectedFolderId(newFolder.id);
+    } catch (error) {
+      console.error("Failed to create folder:", error);
+      window.alert("폴더를 DB에 저장하지 못했습니다.");
+    }
   };
 
   const requestDeleteNote = (noteId) => {
@@ -1488,34 +1792,67 @@ export default function App() {
     });
   };
 
-  const handleConfirmAction = () => {
+  const handleConfirmAction = async () => {
     if (!confirmDialog) {
       return;
     }
 
     if (confirmDialog.kind === "note-delete") {
-      setNotes((current) =>
-        current.map((note) =>
-          note.id === confirmDialog.id
-            ? { ...note, deleted: true, favorite: false, updatedAt: "방금 휴지통으로 이동됨" }
-            : note,
-        ),
-      );
+      try {
+        const updated = await fetchJson(`${API_BASE_URL}/api/notes/${confirmDialog.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ deleted: true, favorite: false }),
+        });
+
+        setNotes((current) =>
+          current.map((note) =>
+            note.id === String(updated.id) ? mapNoteFromApi(updated, note) : note,
+          ),
+        );
+      } catch (error) {
+        console.error("Failed to delete note:", error);
+        window.alert("노트를 휴지통으로 옮기지 못했습니다.");
+        return;
+      }
     }
 
     if (confirmDialog.kind === "folder-delete") {
-      setFolders((current) =>
-        current.map((folder) =>
-          folder.id === confirmDialog.id ? { ...folder, deleted: true } : folder,
-        ),
-      );
-      setNotes((current) =>
-        current.map((note) =>
-          note.folderId === confirmDialog.id
-            ? { ...note, deleted: true, favorite: false, updatedAt: "방금 휴지통으로 이동됨" }
-            : note,
-        ),
-      );
+      try {
+        const updatedFolder = await fetchJson(`${API_BASE_URL}/api/folders/${confirmDialog.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ deleted: true }),
+        });
+
+        const notesInFolder = notes.filter((note) => note.folderId === String(confirmDialog.id));
+        await Promise.all(
+          notesInFolder.map((note) =>
+            fetchJson(`${API_BASE_URL}/api/notes/${note.id}`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ deleted: true, favorite: false }),
+            }),
+          ),
+        );
+
+        setFolders((current) =>
+          current.map((folder) =>
+            folder.id === String(updatedFolder.id) ? mapFolderFromApi(updatedFolder) : folder,
+          ),
+        );
+        setNotes((current) =>
+          current.map((note) =>
+            note.folderId === String(confirmDialog.id)
+              ? { ...note, deleted: true, favorite: false, updatedAt: "방금 휴지통으로 이동됨" }
+              : note,
+          ),
+        );
+      } catch (error) {
+        console.error("Failed to delete folder:", error);
+        window.alert("폴더를 휴지통으로 옮기지 못했습니다.");
+        return;
+      }
       if (selectedFolderId === confirmDialog.id) {
         setSelectedFolderId(null);
       }
@@ -1525,19 +1862,38 @@ export default function App() {
     setContextMenu(null);
   };
 
-  const handleToggleFavorite = (noteId) => {
-    setNotes((current) =>
-      current.map((note) =>
-        note.id === noteId
-          ? {
-              ...note,
-              favorite: !note.favorite,
-              updatedAt: note.favorite ? "즐겨찾기 해제됨" : "즐겨찾기에 추가됨",
-            }
-          : note,
-      ),
-    );
+  const handleToggleFavorite = async (noteId) => {
+    const note = notes.find((item) => item.id === noteId);
+    if (!note) {
+      return;
+    }
+
+    try {
+      const updated = await fetchJson(`${API_BASE_URL}/api/notes/${noteId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ favorite: !note.favorite }),
+      });
+
+      setNotes((current) =>
+        current.map((item) =>
+          item.id === String(updated.id) ? mapNoteFromApi(updated, item) : item,
+        ),
+      );
+    } catch (error) {
+      console.error("Failed to update favorite state:", error);
+      window.alert("즐겨찾기 상태를 저장하지 못했습니다.");
+    }
     setContextMenu(null);
+  };
+
+  const handleNoteCardKeyDown = (event, noteId) => {
+    if (event.key !== "Enter" && event.key !== " ") {
+      return;
+    }
+
+    event.preventDefault();
+    openNote(noteId);
   };
 
   const handleShareNote = async (noteId) => {
@@ -1556,7 +1912,7 @@ export default function App() {
     setContextMenu(null);
   };
 
-  const handleRenameFolder = (folderId) => {
+  const handleRenameFolder = async (folderId) => {
     const folder = folders.find((item) => item.id === folderId);
     if (!folder) {
       return;
@@ -1567,11 +1923,23 @@ export default function App() {
       return;
     }
 
-    setFolders((current) =>
-      current.map((item) =>
-        item.id === folderId ? { ...item, name: nextName.trim() } : item,
-      ),
-    );
+    try {
+      const updated = await fetchJson(`${API_BASE_URL}/api/folders/${folderId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: nextName.trim() }),
+      });
+
+      setFolders((current) =>
+        current.map((item) =>
+          item.id === String(updated.id) ? mapFolderFromApi(updated) : item,
+        ),
+      );
+    } catch (error) {
+      console.error("Failed to rename folder:", error);
+      window.alert("폴더 이름을 저장하지 못했습니다.");
+      return;
+    }
     setContextMenu(null);
   };
 
@@ -2328,7 +2696,7 @@ export default function App() {
   const handleAsk = async () => {
     const trimmedQuestion = question.trim();
     const queuedAttachment = pendingChatAttachmentByNote[selectedNote.id] ?? null;
-    if ((!trimmedQuestion && !queuedAttachment) || isThinking) {
+    if (!hasSelectedNote || (!trimmedQuestion && !queuedAttachment) || isThinking) {
       return;
     }
 
@@ -2384,6 +2752,30 @@ export default function App() {
     setIsThinking(true);
 
     try {
+      let activeSessionId = chatSessionByNote[selectedNote.id] ?? null;
+      if (!activeSessionId) {
+        const createdSession = await fetchJson(`${API_BASE_URL}/api/notes/${selectedNote.id}/chat-sessions`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title: "새 AI 대화" }),
+        });
+        activeSessionId = createdSession.id;
+        setChatSessionByNote((current) => ({
+          ...current,
+          [selectedNote.id]: activeSessionId,
+        }));
+      }
+
+      await fetchJson(`${API_BASE_URL}/api/chat-sessions/${activeSessionId}/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          role: "user",
+          content: trimmedQuestion || "영역 캡처 이미지를 보냈습니다.",
+          capture_analysis: queuedAttachment?.analysis ?? "",
+        }),
+      });
+
       const response = await fetch(`${API_BASE_URL}/api/chat`, {
         method: "POST",
         headers: {
@@ -2411,6 +2803,16 @@ export default function App() {
         role: "assistant",
         text: data.answer,
       };
+
+      await fetchJson(`${API_BASE_URL}/api/chat-sessions/${activeSessionId}/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          role: "assistant",
+          content: data.answer,
+          capture_analysis: "",
+        }),
+      });
 
       setChatByNote((current) => ({
         ...current,
@@ -2580,14 +2982,32 @@ export default function App() {
 
                 <div className="note-card-grid samsung-note-grid">
                   {visibleHomeNotes.map((note) => (
-                    <button
+                    <article
                       key={note.id}
-                      type="button"
                       className={`note-card samsung-note-card ${note.deleted ? "is-trash" : ""}`}
+                      role="button"
+                      tabIndex={0}
                       onClick={() => openNote(note.id)}
+                      onKeyDown={(event) => handleNoteCardKeyDown(event, note.id)}
                       onContextMenu={(event) => handleNoteContextMenu(event, note.id)}
                     >
                       <div className={`note-preview ${getPreviewVariant(note)} ${note.accent}`}>
+                        <button
+                          type="button"
+                          className={`note-favorite-button ${note.favorite ? "is-active" : ""}`}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            handleToggleFavorite(note.id);
+                          }}
+                          onContextMenu={(event) => event.stopPropagation()}
+                          aria-label={note.favorite ? "즐겨찾기 해제" : "즐겨찾기 추가"}
+                        >
+                          <Star
+                            size={16}
+                            strokeWidth={2.1}
+                            fill={note.favorite ? "currentColor" : "#ffffff"}
+                          />
+                        </button>
                         <span className="preview-title">{formatPreviewTitle(note)}</span>
                         <span className="preview-code">{note.code}</span>
                       </div>
@@ -2595,7 +3015,7 @@ export default function App() {
                       <div className="note-card-meta compact">
                         <span>{note.updatedAt}</span>
                       </div>
-                    </button>
+                    </article>
                   ))}
 
                   {visibleHomeNotes.length === 0 ? (
@@ -2613,14 +3033,32 @@ export default function App() {
 
                 <div className="note-card-grid samsung-note-grid">
                   {visibleHomeNotes.map((note) => (
-                    <button
+                    <article
                       key={note.id}
-                      type="button"
                       className={`note-card samsung-note-card ${note.deleted ? "is-trash" : ""}`}
+                      role="button"
+                      tabIndex={0}
                       onClick={() => openNote(note.id)}
+                      onKeyDown={(event) => handleNoteCardKeyDown(event, note.id)}
                       onContextMenu={(event) => handleNoteContextMenu(event, note.id)}
                     >
                       <div className={`note-preview ${getPreviewVariant(note)} ${note.accent}`}>
+                        <button
+                          type="button"
+                          className={`note-favorite-button ${note.favorite ? "is-active" : ""}`}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            handleToggleFavorite(note.id);
+                          }}
+                          onContextMenu={(event) => event.stopPropagation()}
+                          aria-label={note.favorite ? "즐겨찾기 해제" : "즐겨찾기 추가"}
+                        >
+                          <Star
+                            size={16}
+                            strokeWidth={2.1}
+                            fill={note.favorite ? "currentColor" : "#ffffff"}
+                          />
+                        </button>
                         <span className="preview-title">{formatPreviewTitle(note)}</span>
                         <span className="preview-code">{note.code}</span>
                       </div>
@@ -2628,7 +3066,7 @@ export default function App() {
                       <div className="note-card-meta compact">
                         <span>{note.updatedAt}</span>
                       </div>
-                    </button>
+                    </article>
                   ))}
 
                   {visibleHomeNotes.length === 0 ? (
