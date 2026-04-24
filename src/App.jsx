@@ -226,6 +226,8 @@ const INITIAL_MESSAGES = [
   },
 ];
 
+const WELCOME_MESSAGE_ID = "welcome-1";
+
 const PEN_COLORS = [
   { id: "blue", label: "파랑", value: "#1d4ed8" },
   { id: "black", label: "검정", value: "#111827" },
@@ -369,6 +371,15 @@ function buildSelectionPath(points, width, height) {
   });
 
   return `${commands.join(" ")} Z`;
+}
+
+function buildRectangleSelectionPoints(start, end) {
+  return [
+    start,
+    { x: end.x, y: start.y },
+    end,
+    { x: start.x, y: end.y },
+  ];
 }
 
 function isPointInsidePolygon(point, polygon) {
@@ -583,6 +594,7 @@ export default function App() {
   const [penColor, setPenColor] = useState(PEN_COLORS[0].value);
   const [penWidth, setPenWidth] = useState(28);
   const [eraserMode, setEraserMode] = useState("partial");
+  const [captureMode, setCaptureMode] = useState("freeform");
   const [captureSelection, setCaptureSelection] = useState(null);
   const [strokeSelection, setStrokeSelection] = useState(null);
   const [selectionMoveState, setSelectionMoveState] = useState(null);
@@ -597,6 +609,7 @@ export default function App() {
   const uploadUrlsRef = useRef([]);
   const annotationStageRef = useRef(null);
   const annotationScrollRef = useRef(null);
+  const chatThreadRef = useRef(null);
   const pdfCanvasRefs = useRef({});
   const pageSurfaceRefs = useRef({});
   const pendingTextFocusRef = useRef(null);
@@ -821,6 +834,21 @@ export default function App() {
   useEffect(() => {
     setPageJumpInput(String(currentPageIndex + 1));
   }, [currentPageIndex, selectedNote.id]);
+
+  useEffect(() => {
+    if (screen !== "note" || !rightOpen || !chatThreadRef.current) {
+      return undefined;
+    }
+
+    const scrollFrame = window.requestAnimationFrame(() => {
+      const chatThread = chatThreadRef.current;
+      if (chatThread) {
+        chatThread.scrollTop = chatThread.scrollHeight;
+      }
+    });
+
+    return () => window.cancelAnimationFrame(scrollFrame);
+  }, [isThinking, messages.length, rightOpen, screen, selectedNote.id]);
 
   useEffect(() => {
     setSaveStatus("saving");
@@ -1164,6 +1192,11 @@ export default function App() {
   const activateEraseMode = () => {
     setAnnotationMode("erase");
     setToolMenu((current) => (current === "erase" ? null : "erase"));
+  };
+
+  const activateCaptureMode = () => {
+    setAnnotationMode("capture");
+    setToolMenu((current) => (current === "capture" ? null : "capture"));
   };
 
   const updateStrokeSelection = (pageIndex, strokeIds) => {
@@ -1724,7 +1757,7 @@ export default function App() {
       event.stopPropagation();
       activePointerIdRef.current = event.pointerId;
       isCapturingRef.current = true;
-      setCaptureSelection({ pageIndex, points: [point] });
+      setCaptureSelection({ pageIndex, mode: captureMode, startPoint: point, points: [point] });
       return;
     }
 
@@ -1789,6 +1822,13 @@ export default function App() {
       setCaptureSelection((current) => {
         if (!current || current.pageIndex !== pageIndex) {
           return current;
+        }
+
+        if (current.mode === "rectangle" && current.startPoint) {
+          return {
+            ...current,
+            points: buildRectangleSelectionPoints(current.startPoint, point),
+          };
         }
 
         const previousPoint = current.points[current.points.length - 1];
@@ -2331,7 +2371,10 @@ export default function App() {
 
     setChatByNote((current) => ({
       ...current,
-      [selectedNote.id]: [...(current[selectedNote.id] ?? []), userMessage],
+      [selectedNote.id]: [
+        ...(current[selectedNote.id] ?? []).filter((message) => message.id !== WELCOME_MESSAGE_ID),
+        userMessage,
+      ],
     }));
     setPendingChatAttachmentByNote((current) => ({
       ...current,
@@ -2419,7 +2462,7 @@ export default function App() {
 
   const noteWorkspaceColumns = [
     rightOpen ? `${rightWidth}px` : "0px",
-    "0px",
+    rightOpen ? "8px" : "0px",
     "minmax(0, 1fr)",
   ].join(" ");
 
@@ -2656,10 +2699,7 @@ export default function App() {
                     title="영역 캡처"
                     aria-label="영역 캡처"
                     className={annotationMode === "capture" ? "is-active" : ""}
-                    onClick={() => {
-                      setAnnotationMode("capture");
-                      setToolMenu(null);
-                    }}
+                    onClick={activateCaptureMode}
                   >
                     <ScanSearch size={17} strokeWidth={2.1} />
                   </button>
@@ -2754,19 +2794,41 @@ export default function App() {
                       </div>
                     </div>
                   ) : null}
+                  {toolMenu === "capture" ? (
+                    <div className="tool-option-bar" aria-label="영역 캡처 옵션">
+                      <div className="tool-option-group">
+                        <span>캡처 방식</span>
+                        <div className="tool-chip-row">
+                          <button
+                            type="button"
+                            className={`tool-chip ${captureMode === "freeform" ? "is-active" : ""}`}
+                            onClick={() => setCaptureMode("freeform")}
+                          >
+                            자유형
+                          </button>
+                          <button
+                            type="button"
+                            className={`tool-chip ${captureMode === "rectangle" ? "is-active" : ""}`}
+                            onClick={() => setCaptureMode("rectangle")}
+                          >
+                            사각형
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
                   <div className="note-toolbar-spacer" aria-hidden="true" />
                 </div>
 
                 {rightOpen ? (
                   <div className="note-embedded-ai">
                     <div className="chat-panel note-ai-panel note-ai-panel--embedded">
-                      <div className="chat-thread">
+                      <div className="chat-thread" ref={chatThreadRef}>
                         {messages.map((message) => (
                           <div
                             key={message.id}
                             className={`chat-bubble ${message.role === "assistant" ? "assistant" : "user"}`}
                           >
-                            <span className="bubble-role">{message.role === "assistant" ? "AI" : "나"}</span>
                             {message.imageUrl ? (
                               <figure className="chat-image-attachment">
                                 <img src={message.imageUrl} alt={message.imageLabel ?? "첨부 이미지"} />
@@ -2778,46 +2840,44 @@ export default function App() {
 
                         {isThinking ? (
                           <div className="chat-bubble assistant">
-                            <span className="bubble-role">AI</span>
                             <p>현재 페이지와 메모, 이미지 문맥을 바탕으로 답변을 정리하는 중입니다...</p>
                           </div>
                         ) : null}
                       </div>
 
                       <div className="chat-composer">
-                        {pendingChatAttachment ? (
-                          <div className="chat-queued-attachment">
-                            <figure className="chat-image-attachment">
+                        <div className="chat-input-shell">
+                          {pendingChatAttachment ? (
+                            <figure className="chat-queued-attachment">
                               <img
                                 src={pendingChatAttachment.previewUrl}
-                                alt={pendingChatAttachment.imageLabel ?? "첨부 이미지"}
+                                alt="첨부 이미지"
                               />
-                            </figure>
-                            <div className="chat-queued-meta">
-                              <strong>{pendingChatAttachment.imageLabel ?? "캡처 이미지"}</strong>
                               <button
                                 type="button"
+                                className="chat-attachment-remove"
                                 onClick={() =>
                                   setPendingChatAttachmentByNote((current) => ({
                                     ...current,
                                     [selectedNote.id]: null,
                                   }))
                                 }
+                                aria-label="첨부 이미지 제거"
                               >
-                                제거
+                                ×
                               </button>
-                            </div>
-                          </div>
-                        ) : null}
-                        <textarea
-                          value={question}
-                          onChange={(event) => setQuestion(event.target.value)}
-                          onKeyDown={handleKeyDown}
-                          placeholder="현재 페이지 내용이나 첨부 이미지에 대해 질문해보세요..."
-                        />
-                        <button type="button" onClick={handleAsk}>
-                          질문하기
-                        </button>
+                            </figure>
+                          ) : null}
+                          <textarea
+                            value={question}
+                            onChange={(event) => setQuestion(event.target.value)}
+                            onKeyDown={handleKeyDown}
+                            placeholder="현재 페이지 내용이나 첨부 이미지에 대해 질문해보세요..."
+                          />
+                          <button type="button" className="chat-send-button" onClick={handleAsk} aria-label="질문 보내기">
+                            ↑
+                          </button>
+                        </div>
                       </div>
                     </div>
                   </div>
