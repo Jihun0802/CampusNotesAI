@@ -783,7 +783,15 @@ export default function App() {
 
   const notesInFolders = useMemo(() => notes.filter((note) => !note.deleted && note.folderId), [notes]);
   const ungroupedNotes = useMemo(() => notes.filter((note) => !note.deleted && !note.folderId), [notes]);
-  const deletedFolders = useMemo(() => folders.filter((folder) => folder.deleted), [folders]);
+  const visibleFolderCards = useMemo(() => {
+    if (selectedNav === "folders") {
+      return folders.filter((folder) => !folder.deleted);
+    }
+    if (selectedNav === "trash") {
+      return folders.filter((folder) => folder.deleted);
+    }
+    return [];
+  }, [folders, selectedNav]);
 
   const filteredNotes = useMemo(() => {
     if (selectedNav === "all") {
@@ -2953,128 +2961,82 @@ export default function App() {
               </div>
             </header>
 
-            {selectedNav === "folders" ? (
-              <>
-                <div className="folder-strip">
-                  {folders.filter((folder) => !folder.deleted).map((folder) => {
-                    const count = notesInFolders.filter((note) => note.folderId === folder.id).length;
-                    return (
-                      <button
-                        key={folder.id}
-                        type="button"
-                        className={`folder-card samsung-folder-card ${selectedFolderId === folder.id ? "is-active" : ""}`}
-                        onClick={() => handleFolderSelect(folder.id)}
-                        onContextMenu={(event) => handleFolderContextMenu(event, folder.id)}
-                      >
-                        <div className="folder-tab" />
-                        <div className="folder-card-meta">{count}</div>
-                        <strong>{folder.name}</strong>
-                      </button>
-                    );
-                  })}
-                </div>
+            {visibleFolderCards.length > 0 ? (
+              <div className="folder-strip">
+                {visibleFolderCards.map((folder) => {
+                  const count = notes.filter((note) => {
+                    if (note.folderId !== folder.id) {
+                      return false;
+                    }
+                    if (selectedNav === "trash") {
+                      return note.deleted;
+                    }
+                    return !note.deleted;
+                  }).length;
+                  const isActiveFolder = selectedNav === "folders" && selectedFolderId === folder.id;
 
-                <div className="notes-toolbar-row">
-                  <button type="button" className="sort-chip">
-                    만든 날짜순
-                  </button>
-                </div>
-
-                <div className="note-card-grid samsung-note-grid">
-                  {visibleHomeNotes.map((note) => (
-                    <article
-                      key={note.id}
-                      className={`note-card samsung-note-card ${note.deleted ? "is-trash" : ""}`}
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => openNote(note.id)}
-                      onKeyDown={(event) => handleNoteCardKeyDown(event, note.id)}
-                      onContextMenu={(event) => handleNoteContextMenu(event, note.id)}
+                  return (
+                    <button
+                      key={folder.id}
+                      type="button"
+                      className={`folder-card samsung-folder-card ${isActiveFolder ? "is-active" : ""}`}
+                      onClick={() => handleFolderSelect(folder.id)}
+                      onContextMenu={(event) => handleFolderContextMenu(event, folder.id)}
                     >
-                      <div className={`note-preview ${getPreviewVariant(note)} ${note.accent}`}>
-                        <button
-                          type="button"
-                          className={`note-favorite-button ${note.favorite ? "is-active" : ""}`}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            handleToggleFavorite(note.id);
-                          }}
-                          onContextMenu={(event) => event.stopPropagation()}
-                          aria-label={note.favorite ? "즐겨찾기 해제" : "즐겨찾기 추가"}
-                        >
-                          <Star
-                            size={16}
-                            strokeWidth={2.1}
-                            fill={note.favorite ? "currentColor" : "#ffffff"}
-                          />
-                        </button>
-                        <span className="preview-title">{formatPreviewTitle(note)}</span>
-                        <span className="preview-code">{note.code}</span>
-                      </div>
-                      <strong>{note.name}</strong>
-                      <div className="note-card-meta compact">
-                        <span>{note.updatedAt}</span>
-                      </div>
-                    </article>
-                  ))}
+                      <div className="folder-tab" />
+                      <div className="folder-card-meta">{count}</div>
+                      <strong>{folder.name}</strong>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
 
-                  {visibleHomeNotes.length === 0 ? (
-                    <div className="empty-state-card">표시할 노트가 없습니다.</div>
-                  ) : null}
-                </div>
-              </>
-            ) : (
-              <>
-                <div className="notes-toolbar-row">
-                  <button type="button" className="sort-chip">
-                    만든 날짜순
-                  </button>
-                </div>
+            <div className="notes-toolbar-row">
+              <button type="button" className="sort-chip">
+                만든 날짜순
+              </button>
+            </div>
 
-                <div className="note-card-grid samsung-note-grid">
-                  {visibleHomeNotes.map((note) => (
-                    <article
-                      key={note.id}
-                      className={`note-card samsung-note-card ${note.deleted ? "is-trash" : ""}`}
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => openNote(note.id)}
-                      onKeyDown={(event) => handleNoteCardKeyDown(event, note.id)}
-                      onContextMenu={(event) => handleNoteContextMenu(event, note.id)}
+            <div className="note-card-grid samsung-note-grid">
+              {visibleHomeNotes.map((note) => (
+                <article
+                  key={note.id}
+                  className={`note-card samsung-note-card ${note.deleted ? "is-trash" : ""}`}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => openNote(note.id)}
+                  onKeyDown={(event) => handleNoteCardKeyDown(event, note.id)}
+                  onContextMenu={(event) => handleNoteContextMenu(event, note.id)}
+                >
+                  <div className={`note-preview ${getPreviewVariant(note)} ${note.accent}`}>
+                    <button
+                      type="button"
+                      className={`note-favorite-button ${note.favorite ? "is-active" : ""}`}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        handleToggleFavorite(note.id);
+                      }}
+                      onContextMenu={(event) => event.stopPropagation()}
+                      aria-label={note.favorite ? "즐겨찾기 해제" : "즐겨찾기 추가"}
                     >
-                      <div className={`note-preview ${getPreviewVariant(note)} ${note.accent}`}>
-                        <button
-                          type="button"
-                          className={`note-favorite-button ${note.favorite ? "is-active" : ""}`}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            handleToggleFavorite(note.id);
-                          }}
-                          onContextMenu={(event) => event.stopPropagation()}
-                          aria-label={note.favorite ? "즐겨찾기 해제" : "즐겨찾기 추가"}
-                        >
-                          <Star
-                            size={16}
-                            strokeWidth={2.1}
-                            fill={note.favorite ? "currentColor" : "#ffffff"}
-                          />
-                        </button>
-                        <span className="preview-title">{formatPreviewTitle(note)}</span>
-                        <span className="preview-code">{note.code}</span>
-                      </div>
-                      <strong>{note.name}</strong>
-                      <div className="note-card-meta compact">
-                        <span>{note.updatedAt}</span>
-                      </div>
-                    </article>
-                  ))}
+                      <Star
+                        size={16}
+                        strokeWidth={2.1}
+                        fill={note.favorite ? "currentColor" : "#ffffff"}
+                      />
+                    </button>
+                    <span className="preview-title">{formatPreviewTitle(note)}</span>
+                    <span className="preview-code">{note.code}</span>
+                  </div>
+                  <strong>{note.name}</strong>
+                  <div className="note-card-meta compact">
+                    <span>{note.updatedAt}</span>
+                  </div>
+                </article>
+              ))}
 
-                  {visibleHomeNotes.length === 0 ? (
-                    <div className="empty-state-card">표시할 노트가 없습니다.</div>
-                  ) : null}
-                </div>
-              </>
-            )}
+            </div>
           </section>
         ) : (
           <>
@@ -3485,16 +3447,6 @@ export default function App() {
           </>
         )}
       </div>
-
-      {screen === "home" && selectedNav === "trash" && deletedFolders.length > 0 ? (
-        <div className="trash-folder-dock">
-          {deletedFolders.map((folder) => (
-            <div key={folder.id} className="trash-folder-chip">
-              {folder.name}
-            </div>
-          ))}
-        </div>
-      ) : null}
 
       {contextMenu ? (
         <div
