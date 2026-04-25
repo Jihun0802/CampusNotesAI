@@ -4,13 +4,16 @@ import {
   Home,
   Camera,
   Eraser,
+  FileText,
   FileUp,
+  Folder,
   ImagePlus,
   PenLine,
   RotateCcw,
   ScanSearch,
   Sparkles,
   Star,
+  Trash2,
   Type,
 } from "lucide-react";
 import { GlobalWorkerOptions, getDocument } from "pdfjs-dist";
@@ -20,7 +23,7 @@ GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
 const DEFAULT_PDF_PATH = "/4_Maximum%20likelihood%20learning.pdf";
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
-const COLLAPSED_RAIL = 30;
+const COLLAPSED_RAIL = 62;
 const NOTE_AI_MIN = 260;
 const NOTE_AI_COLLAPSE_THRESHOLD = 240;
 
@@ -260,6 +263,13 @@ const NAV_ITEMS = [
   { id: "folders", label: "폴더" },
 ];
 
+const NAV_ICONS = {
+  all: FileText,
+  favorites: Star,
+  trash: Trash2,
+  folders: Folder,
+};
+
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
 }
@@ -300,6 +310,19 @@ function mapFolderFromApi(folder) {
   };
 }
 
+function formatNoteDate(value) {
+  if (!value) {
+    return "저장됨";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return `${date.getMonth() + 1}월 ${date.getDate()}일`;
+}
+
 function mapNoteFromApi(note, existingNote) {
   const pages = note.pages?.length
     ? [...note.pages]
@@ -318,7 +341,7 @@ function mapNoteFromApi(note, existingNote) {
     folderId: note.folder_id == null ? null : String(note.folder_id),
     favorite: Boolean(note.favorite),
     deleted: Boolean(note.deleted),
-    updatedAt: note.updated_at ?? note.created_at ?? "저장됨",
+    updatedAt: formatNoteDate(note.updated_at ?? note.created_at),
     pages,
   };
 }
@@ -649,6 +672,8 @@ export default function App() {
   const [isStorageLoading, setIsStorageLoading] = useState(true);
   const [storageError, setStorageError] = useState("");
   const [chatSessionByNote, setChatSessionByNote] = useState({});
+  const [dragPayload, setDragPayload] = useState(null);
+  const [dragOverFolderId, setDragOverFolderId] = useState(null);
   const [pageJumpInput, setPageJumpInput] = useState("1");
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
@@ -1650,7 +1675,7 @@ export default function App() {
   const handleFolderSelect = (folderId) => {
     setSelectedNav("folders");
     setScreen("home");
-    setSelectedFolderId((current) => (current === folderId ? null : folderId));
+    setSelectedFolderId(folderId);
     setSearchQuery("");
   };
 
@@ -1902,6 +1927,83 @@ export default function App() {
 
     event.preventDefault();
     openNote(noteId);
+  };
+
+  const handleCardDragStart = (event, payload) => {
+    setDragPayload(payload);
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", `${payload.type}:${payload.id}`);
+  };
+
+  const handleCardDragEnd = () => {
+    setDragPayload(null);
+    setDragOverFolderId(null);
+  };
+
+  const moveNoteToFolder = async (noteId, targetFolderId) => {
+    const note = notes.find((item) => item.id === noteId);
+    if (!note || note.folderId === targetFolderId) {
+      return;
+    }
+
+    const previousFolderId = note.folderId;
+    setNotes((current) =>
+      current.map((item) =>
+        item.id === noteId ? { ...item, folderId: targetFolderId, updatedAt: "방금 폴더로 이동됨" } : item,
+      ),
+    );
+
+    try {
+      const updated = await fetchJson(`${API_BASE_URL}/api/notes/${noteId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ folder_id: Number(targetFolderId) }),
+      });
+
+      setNotes((current) =>
+        current.map((item) =>
+          item.id === String(updated.id) ? mapNoteFromApi(updated, item) : item,
+        ),
+      );
+    } catch (error) {
+      console.error("Failed to move note to folder:", error);
+      setNotes((current) =>
+        current.map((item) =>
+          item.id === noteId ? { ...item, folderId: previousFolderId } : item,
+        ),
+      );
+      window.alert("노트를 폴더로 이동하지 못했습니다.");
+    }
+  };
+
+  const handleFolderDragOver = (event, folderId) => {
+    if (!dragPayload || (dragPayload.type === "folder" && dragPayload.id === folderId)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    setDragOverFolderId(folderId);
+  };
+
+  const handleFolderDrop = async (event, targetFolderId) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    const payload = dragPayload;
+    setDragPayload(null);
+    setDragOverFolderId(null);
+
+    if (!payload) {
+      return;
+    }
+
+    if (payload.type === "note") {
+      await moveNoteToFolder(payload.id, targetFolderId);
+      return;
+    }
+
+    window.alert("폴더 안에 폴더를 넣는 기능은 폴더 중첩 저장 구조가 추가된 뒤 연결할 수 있습니다.");
   };
 
   const handleShareNote = async (noteId) => {
@@ -2861,7 +2963,10 @@ export default function App() {
     }
   };
 
-  const mainTitle = NAV_ITEMS.find((item) => item.id === selectedNav)?.label ?? "폴더";
+  const mainTitle =
+    selectedNav === "folders" && selectedFolder
+      ? selectedFolder.name
+      : NAV_ITEMS.find((item) => item.id === selectedNav)?.label ?? "폴더";
 
   const noteDetailGridColumns =
     screen === "note"
@@ -2892,6 +2997,7 @@ export default function App() {
 
                 <nav className="nav-list" aria-label="메인 메뉴">
                   {NAV_ITEMS.map((item) => {
+                    const Icon = NAV_ICONS[item.id];
                     const active = selectedNav === item.id && screen === "home";
                     return (
                       <button
@@ -2900,7 +3006,14 @@ export default function App() {
                         className={`nav-item ${active ? "is-active" : ""}`}
                         onClick={() => openHome(item.id)}
                       >
-                        <span>{item.label}</span>
+                        <span className="nav-item-label">
+                          <Icon
+                            size={17}
+                            strokeWidth={2.1}
+                            fill={item.id === "favorites" && active ? "currentColor" : "none"}
+                          />
+                          {item.label}
+                        </span>
                         <strong>{noteCounts[item.id]}</strong>
                       </button>
                     );
@@ -2927,14 +3040,36 @@ export default function App() {
                 ) : null}
               </div>
             ) : (
-              <button
-                type="button"
-                className="collapsed-toggle"
-                onClick={() => setLeftOpen(true)}
-                aria-label="왼쪽 사이드바 열기"
-              >
-                메뉴
-              </button>
+              <div className="collapsed-sidebar" aria-label="접힌 메인 메뉴">
+                <button
+                  type="button"
+                  className="collapsed-menu-button"
+                  onClick={() => setLeftOpen(true)}
+                  aria-label="왼쪽 사이드바 열기"
+                  title="메뉴 열기"
+                >
+                  ☰
+                </button>
+                <nav className="collapsed-nav-list" aria-label="접힌 메인 메뉴">
+                  {NAV_ITEMS.map((item) => {
+                    const Icon = NAV_ICONS[item.id];
+                    const active = selectedNav === item.id && screen === "home";
+
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        className={`collapsed-nav-item ${active ? "is-active" : ""}`}
+                        onClick={() => openHome(item.id)}
+                        aria-label={item.label}
+                        title={item.label}
+                      >
+                        <Icon size={17} strokeWidth={2.1} fill={item.id === "favorites" && active ? "currentColor" : "none"} />
+                      </button>
+                    );
+                  })}
+                </nav>
+              </div>
             )}
           </aside>
         ) : null}
@@ -2961,7 +3096,29 @@ export default function App() {
               </div>
             </header>
 
-            {visibleFolderCards.length > 0 ? (
+            {selectedNav === "folders" && selectedFolder ? (
+              <div className="folder-breadcrumb" aria-label="현재 폴더 위치">
+                <button
+                  type="button"
+                  className="folder-breadcrumb-icon"
+                  onClick={() => setSelectedFolderId(null)}
+                  aria-label="폴더 목록으로 돌아가기"
+                  title="폴더 목록"
+                >
+                  <Folder size={17} strokeWidth={2} />
+                </button>
+                <span aria-hidden="true">›</span>
+                <button
+                  type="button"
+                  className="folder-breadcrumb-current"
+                  onClick={() => handleFolderSelect(selectedFolder.id)}
+                  aria-label={`${selectedFolder.name} 폴더 열기`}
+                  title={selectedFolder.name}
+                >
+                  {selectedFolder.name}
+                </button>
+              </div>
+            ) : visibleFolderCards.length > 0 ? (
               <div className="folder-strip">
                 {visibleFolderCards.map((folder) => {
                   const count = notes.filter((note) => {
@@ -2979,7 +3136,17 @@ export default function App() {
                     <button
                       key={folder.id}
                       type="button"
-                      className={`folder-card samsung-folder-card ${isActiveFolder ? "is-active" : ""}`}
+                      className={`folder-card samsung-folder-card ${
+                        isActiveFolder ? "is-active" : ""
+                      } ${dragOverFolderId === folder.id ? "is-drag-over" : ""} ${
+                        dragPayload?.type === "folder" && dragPayload.id === folder.id ? "is-dragging" : ""
+                      }`}
+                      draggable
+                      onDragStart={(event) => handleCardDragStart(event, { type: "folder", id: folder.id })}
+                      onDragEnd={handleCardDragEnd}
+                      onDragOver={(event) => handleFolderDragOver(event, folder.id)}
+                      onDragLeave={() => setDragOverFolderId((current) => (current === folder.id ? null : current))}
+                      onDrop={(event) => handleFolderDrop(event, folder.id)}
                       onClick={() => handleFolderSelect(folder.id)}
                       onContextMenu={(event) => handleFolderContextMenu(event, folder.id)}
                     >
@@ -3002,9 +3169,14 @@ export default function App() {
               {visibleHomeNotes.map((note) => (
                 <article
                   key={note.id}
-                  className={`note-card samsung-note-card ${note.deleted ? "is-trash" : ""}`}
+                  className={`note-card samsung-note-card ${note.deleted ? "is-trash" : ""} ${
+                    dragPayload?.type === "note" && dragPayload.id === note.id ? "is-dragging" : ""
+                  }`}
                   role="button"
                   tabIndex={0}
+                  draggable
+                  onDragStart={(event) => handleCardDragStart(event, { type: "note", id: note.id })}
+                  onDragEnd={handleCardDragEnd}
                   onClick={() => openNote(note.id)}
                   onKeyDown={(event) => handleNoteCardKeyDown(event, note.id)}
                   onContextMenu={(event) => handleNoteContextMenu(event, note.id)}

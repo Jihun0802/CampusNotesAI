@@ -97,6 +97,8 @@ button {
 }
 
 .samsung-sidebar {
+  padding-left: 10px;
+  padding-right: 10px;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(246, 248, 252, 0.98));
 }
 
@@ -452,7 +454,6 @@ button {
 }
 
 .sidebar-toggle,
-.collapsed-toggle,
 .note-ai-toggle,
 .chat-composer button,
 .back-link,
@@ -464,7 +465,6 @@ button {
 }
 
 .sidebar-toggle,
-.collapsed-toggle,
 .note-ai-toggle,
 .chat-composer button {
   background: #1b2430;
@@ -480,12 +480,62 @@ button {
   color: #1b2430;
 }
 
-.collapsed-toggle {
-  width: 30px;
-  min-height: 108px;
-  padding: 12px 4px;
-  writing-mode: vertical-rl;
-  text-orientation: mixed;
+.collapsed-sidebar {
+  width: 100%;
+  height: 100%;
+  padding: 18px 0;
+  border: 1px solid #e3e9f2;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 18px 40px rgba(148, 163, 184, 0.14);
+  display: grid;
+  grid-template-rows: auto 1fr;
+  justify-items: center;
+  gap: 18px;
+}
+
+.collapsed-menu-button,
+.collapsed-nav-item {
+  width: 40px;
+  height: 48px;
+  padding: 0px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: #1b2430;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.collapsed-menu-button {
+  font-size: 1rem;
+}
+
+.collapsed-nav-list {
+  display: grid;
+  align-content: start;
+  justify-items: center;
+  gap: 10px;
+}
+
+.collapsed-nav-item {
+  color: #232329;
+}
+
+.collapsed-nav-item.is-active {
+  background: #e8e8ea;
+  color: #232329;
+}
+
+.collapsed-nav-item:hover,
+.collapsed-menu-button:hover {
+  background: #f3f6fb;
+  color: #1f3d67;
+}
+
+.collapsed-nav-item svg {
+  display: block;
 }
 
 .note-ai-toggle {
@@ -587,7 +637,7 @@ button {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 14px;
+  padding: 12px 10px;
   border-radius: 14px;
   text-align: left;
   color: #232329;
@@ -603,6 +653,18 @@ button {
 .folder-nav-item.is-active {
   background: #e8e8ea;
   font-weight: 700;
+}
+
+.nav-item-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.nav-item-label svg {
+  flex: 0 0 auto;
+  display: block;
 }
 
 .folder-nav-list {
@@ -673,11 +735,56 @@ button {
   margin-top: 30px;
 }
 
+.folder-breadcrumb {
+  min-height: 32px;
+  margin-top: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  gap: 8px;
+  color: #4b5563;
+  font-size: 0.86rem;
+}
+
+.folder-breadcrumb span {
+  color: #9ca3af;
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.folder-breadcrumb-icon,
+.folder-breadcrumb-current {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #374151;
+  display: inline-flex;
+  align-items: center;
+}
+
+.folder-breadcrumb-icon {
+  color: #6b7280;
+}
+
+.folder-breadcrumb-icon:hover,
+.folder-breadcrumb-current:hover {
+  color: #1f3d67;
+}
+
+.folder-breadcrumb-current {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  font-size: inherit;
+}
+
 .samsung-folder-card {
   position: relative;
   width: 106px;
   height: 90px;
-  padding: 12px 12px 10px;
+  padding: 8px 10px 8px;
   border: 1px solid #e5eaf3;
   border-radius: 20px;
   background: linear-gradient(180deg, #ffffff, #fbfcfe);
@@ -695,6 +802,17 @@ button {
   transform: translateY(-2px);
 }
 
+.samsung-folder-card.is-drag-over {
+  border-color: #5f79ff;
+  background: linear-gradient(180deg, #f8fbff, #eef4ff);
+  box-shadow: 0 16px 30px rgba(95, 121, 255, 0.22);
+}
+
+.samsung-folder-card.is-dragging,
+.samsung-note-card.is-dragging {
+  opacity: 0.48;
+}
+
 .folder-tab {
   position: absolute;
   top: -1px;
@@ -705,9 +823,9 @@ button {
   background: #d9e2ff;
 }
 
-.folder-card-meta {
-  margin-bottom: 12px;
-  color: #8b8b91;
+.folder-card-meta {/* 메인화면 폴더 좌측 상단 노트갯수 */
+  margin-bottom: 18px;
+  color: #918c8b;
   font-size: 0.82rem;
 }
 
@@ -723,7 +841,7 @@ button {
   -webkit-line-clamp: 2;
   font-size: 0.8rem;
   font-weight: 500;
-  line-height: 1.2;
+  line-height: 1.12;
 }
 
 .folder-card {
@@ -753,12 +871,17 @@ button {
 
 .note-card {
   width: 100%;
-  min-height: 254px;
+  min-height: 236px;
   border: 0;
   background: transparent;
   padding: 0;
   text-align: left;
   cursor: pointer;
+}
+
+.samsung-folder-card,
+.samsung-note-card {
+  user-select: none;
 }
 
 .note-card:focus-visible {
@@ -769,17 +892,20 @@ button {
 
 .samsung-note-card strong {
   display: block;
-  margin-top: 10px;
-  min-height: 42px;
-  font-size: 0.98rem;
+  margin-top: 6px;
+  min-height: 20px;
+  text-align: center;
+  font-size: 0.88rem;
   font-weight: 600;
-  line-height: 1.35;
+  line-height: 1.18;
   color: #232329;
 }
 
 .note-card-meta.compact {
-  margin-top: 4px;
-  min-height: 22px;
+  margin-top: 0;
+  min-height: 16px;
+  justify-content: center;
+  text-align: center;
 }
 
 .note-preview {
