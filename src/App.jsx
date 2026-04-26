@@ -302,6 +302,19 @@ function makeFrontendPage(pageIndex, typedText = "") {
   };
 }
 
+function parsePageStrokes(value) {
+  if (!value) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
 function mapFolderFromApi(folder) {
   return {
     id: String(folder.id),
@@ -324,13 +337,16 @@ function formatNoteDate(value) {
 }
 
 function mapNoteFromApi(note, existingNote) {
-  const pages = note.pages?.length
-    ? [...note.pages]
-        .sort((a, b) => a.page_index - b.page_index)
+  const sortedPages = note.pages?.length
+    ? [...note.pages].sort((a, b) => a.page_index - b.page_index)
+    : [];
+  const pages = sortedPages.length
+    ? sortedPages
         .map((page) => makeFrontendPage(page.page_index - 1, page.typed_text))
     : existingNote?.pages?.length
       ? existingNote.pages
       : [DEFAULT_NOTE_PAGE];
+  const firstRawPage = sortedPages[0] ?? null;
 
   return {
     id: String(note.id),
@@ -342,6 +358,7 @@ function mapNoteFromApi(note, existingNote) {
     favorite: Boolean(note.favorite),
     deleted: Boolean(note.deleted),
     updatedAt: formatNoteDate(note.updated_at ?? note.created_at),
+    previewStrokes: parsePageStrokes(firstRawPage?.handwriting_data),
     pages,
   };
 }
@@ -393,6 +410,57 @@ function getPreviewVariant(note) {
 
 function formatPreviewTitle(note) {
   return note.pages[0]?.title ?? note.name;
+}
+
+async function renderPdfFirstPageThumbnail(pdfUrl, strokes = []) {
+  const loadingTask = getDocument(pdfUrl);
+  const pdfDocument = await loadingTask.promise;
+
+  try {
+    const page = await pdfDocument.getPage(1);
+    const baseViewport = page.getViewport({ scale: 1 });
+    const targetWidth = 360;
+    const viewport = page.getViewport({ scale: targetWidth / baseViewport.width });
+    const canvas = document.createElement("canvas");
+    const context = canvas.getContext("2d");
+
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+
+    await page.render({
+      canvasContext: context,
+      viewport,
+    }).promise;
+
+    strokes.forEach((stroke) => {
+      const points = stroke.points ?? [];
+      if (points.length < 2) {
+        return;
+      }
+
+      context.save();
+      context.beginPath();
+      points.forEach((point, index) => {
+        const x = point.x * canvas.width;
+        const y = point.y * canvas.height;
+        if (index === 0) {
+          context.moveTo(x, y);
+          return;
+        }
+        context.lineTo(x, y);
+      });
+      context.strokeStyle = stroke.color ?? "#1d4ed8";
+      context.lineWidth = Math.max((stroke.width ?? 4) * 0.45, 1);
+      context.lineCap = "round";
+      context.lineJoin = "round";
+      context.stroke();
+      context.restore();
+    });
+
+    return canvas.toDataURL("image/png");
+  } finally {
+    pdfDocument?.destroy?.();
+  }
 }
 
 function buildStrokePath(points, width, height) {
@@ -666,6 +734,7 @@ export default function App() {
   const [capturesByPage, setCapturesByPage] = useState({});
   const [pendingChatAttachmentByNote, setPendingChatAttachmentByNote] = useState({});
   const [pdfByNote, setPdfByNote] = useState({});
+  const [pdfPreviewByNote, setPdfPreviewByNote] = useState({});
   const [question, setQuestion] = useState("");
   const [isThinking, setIsThinking] = useState(false);
   const [saveStatus, setSaveStatus] = useState("saved");
@@ -855,6 +924,62 @@ export default function App() {
     });
   }, [filteredNotes, folders, notes, searchQuery, selectedFolder, selectedNav, ungroupedNotes]);
 
+  useEffect(() => {
+    if (screen !== "home" || visibleHomeNotes.length === 0) {
+      return undefined;
+    }
+
+    let cancelled = false;
+
+    const renderVisibleThumbnails = async () => {
+      await Promise.all(
+        visibleHomeNotes.map(async (note) => {
+          const pdfInfo = pdfByNote[note.id] ?? {
+            name: "4_Maximum likelihood learning.pdf",
+            previewUrl: DEFAULT_PDF_PATH,
+            isBundled: true,
+          };
+          const firstPageStrokes = strokesByPage[`${note.id}:0`] ?? note.previewStrokes ?? [];
+          const strokeSignature = JSON.stringify(
+            firstPageStrokes.map((stroke) => ({
+              id: stroke.id,
+              color: stroke.color,
+              width: stroke.width,
+              points: stroke.points,
+            })),
+          );
+          const cacheKey = `${note.id}:${pdfInfo.previewUrl}:${strokeSignature}`;
+
+          if (pdfPreviewByNote[note.id]?.cacheKey === cacheKey) {
+            return;
+          }
+
+          try {
+            const imageUrl = await renderPdfFirstPageThumbnail(pdfInfo.previewUrl, firstPageStrokes);
+            if (cancelled) {
+              return;
+            }
+            setPdfPreviewByNote((current) => ({
+              ...current,
+              [note.id]: {
+                cacheKey,
+                imageUrl,
+              },
+            }));
+          } catch (error) {
+            console.error("Failed to render note preview thumbnail:", error);
+          }
+        }),
+      );
+    };
+
+    renderVisibleThumbnails();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [pdfByNote, pdfPreviewByNote, screen, strokesByPage, visibleHomeNotes]);
+
   const hydrateNoteDetail = async (noteId) => {
     if (!noteId) {
       return;
@@ -955,8 +1080,18 @@ export default function App() {
         fetchJson(`${API_BASE_URL}/api/notes`),
       ]);
 
+      const noteDetails = await Promise.all(
+        noteData.map(async (note) => {
+          try {
+            return await fetchJson(`${API_BASE_URL}/api/notes/${note.id}`);
+          } catch {
+            return note;
+          }
+        }),
+      );
+
       const nextFolders = folderData.map(mapFolderFromApi);
-      const nextNotes = noteData.map((note) => mapNoteFromApi(note));
+      const nextNotes = noteDetails.map((note) => mapNoteFromApi(note));
 
       setFolders(nextFolders);
       setNotes(nextNotes);
@@ -3166,47 +3301,56 @@ export default function App() {
             </div>
 
             <div className="note-card-grid samsung-note-grid">
-              {visibleHomeNotes.map((note) => (
-                <article
-                  key={note.id}
-                  className={`note-card samsung-note-card ${note.deleted ? "is-trash" : ""} ${
-                    dragPayload?.type === "note" && dragPayload.id === note.id ? "is-dragging" : ""
-                  }`}
-                  role="button"
-                  tabIndex={0}
-                  draggable
-                  onDragStart={(event) => handleCardDragStart(event, { type: "note", id: note.id })}
-                  onDragEnd={handleCardDragEnd}
-                  onClick={() => openNote(note.id)}
-                  onKeyDown={(event) => handleNoteCardKeyDown(event, note.id)}
-                  onContextMenu={(event) => handleNoteContextMenu(event, note.id)}
-                >
-                  <div className={`note-preview ${getPreviewVariant(note)} ${note.accent}`}>
-                    <button
-                      type="button"
-                      className={`note-favorite-button ${note.favorite ? "is-active" : ""}`}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        handleToggleFavorite(note.id);
-                      }}
-                      onContextMenu={(event) => event.stopPropagation()}
-                      aria-label={note.favorite ? "즐겨찾기 해제" : "즐겨찾기 추가"}
-                    >
-                      <Star
-                        size={16}
-                        strokeWidth={2.1}
-                        fill={note.favorite ? "currentColor" : "#ffffff"}
-                      />
-                    </button>
-                    <span className="preview-title">{formatPreviewTitle(note)}</span>
-                    <span className="preview-code">{note.code}</span>
-                  </div>
-                  <strong>{note.name}</strong>
-                  <div className="note-card-meta compact">
-                    <span>{note.updatedAt}</span>
-                  </div>
-                </article>
-              ))}
+              {visibleHomeNotes.map((note) => {
+                const pdfPreview = pdfPreviewByNote[note.id]?.imageUrl ?? "";
+
+                return (
+                  <article
+                    key={note.id}
+                    className={`note-card samsung-note-card ${note.deleted ? "is-trash" : ""} ${
+                      dragPayload?.type === "note" && dragPayload.id === note.id ? "is-dragging" : ""
+                    }`}
+                    role="button"
+                    tabIndex={0}
+                    draggable
+                    onDragStart={(event) => handleCardDragStart(event, { type: "note", id: note.id })}
+                    onDragEnd={handleCardDragEnd}
+                    onClick={() => openNote(note.id)}
+                    onKeyDown={(event) => handleNoteCardKeyDown(event, note.id)}
+                    onContextMenu={(event) => handleNoteContextMenu(event, note.id)}
+                  >
+                    <div className={`note-preview ${getPreviewVariant(note)} ${note.accent}`}>
+                      <button
+                        type="button"
+                        className={`note-favorite-button ${note.favorite ? "is-active" : ""}`}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          handleToggleFavorite(note.id);
+                        }}
+                        onContextMenu={(event) => event.stopPropagation()}
+                        aria-label={note.favorite ? "즐겨찾기 해제" : "즐겨찾기 추가"}
+                      >
+                        <Star
+                          size={16}
+                          strokeWidth={2.1}
+                          fill={note.favorite ? "currentColor" : "#ffffff"}
+                        />
+                      </button>
+                      <div className="note-preview-content">
+                        {pdfPreview ? (
+                          <img src={pdfPreview} alt={`${note.name} 1페이지 미리보기`} />
+                        ) : (
+                          <div className="note-preview-loading" aria-label="1페이지 미리보기 준비 중" />
+                        )}
+                      </div>
+                    </div>
+                    <strong>{note.name}</strong>
+                    <div className="note-card-meta compact">
+                      <span>{note.updatedAt}</span>
+                    </div>
+                  </article>
+                );
+              })}
 
             </div>
           </section>
